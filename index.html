@@ -285,6 +285,7 @@
 
   // ---------------- pii ----------------
   var WHITELIST_HOSP = new Set(["当院", "近医", "他院", "前院", "前医", "紹介元", "紹介先", "院内"]);
+  var GENERIC_HOSPITAL = new Set(["総合病院","大学病院","一般病院","専門病院","単科病院","急性期病院","回復期病院","慢性期病院","療養型病院","療養病院","回復期リハビリ病院","回復期リハビリテーション病院","リハビリ病院","リハビリテーション病院","精神科病院","地域病院","地域医療支援病院","地域医療センター","中核病院","基幹病院","市中病院","公立病院","私立病院","救急病院","三次救急病院","二次救急病院","療養型医療施設"]);
   var HOSPITAL_RE = /([一-龥々ヶ゠-ヿA-Za-zＡ-Ｚａ-ｚ]{1,15}?)(大学病院|総合病院|医療センター|病院|クリニック|医院|診療所)/g;
   var DATE_PATTERNS = [
     /(19|20)\d{2}[/\-．](1[0-2]|0?[1-9])[/\-．](3[01]|[12]\d|0?[1-9])/g,
@@ -312,6 +313,8 @@
         m = ms[j]; var prefix = m[1], kind = m[2], full = prefix + kind;
         if (hospExcluded(prefix, full)) continue;
         if (["当", "近", "他", "前", "院"].indexOf(prefix) >= 0) continue;
+        if (GENERIC_HOSPITAL.has(full)) continue;  // 回復期病院・地域病院 等の一般名詞
+        if (prefix.length === 1 && /^[A-Za-z]$/.test(prefix)) continue;  // A病院・B医療センター 等の匿名化
         var hkey = "hospital|" + full; if (seen.has(hkey)) continue; seen.add(hkey);
         issues.push(iss("pii", "fatal", "病院・施設の固有名と思われる記載: 「" + full + "」", section, full, "「当院」「近医」「他院」など匿名表記に置き換えてください"));
       }
