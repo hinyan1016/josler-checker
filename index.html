@@ -481,21 +481,36 @@
   var CJK_CHAR = "[ぁ-ゖァ-ヺー一-鿿々〆ヵヶ]";
   var PROSE_HANKAKU_COMMA_RE = new RegExp(CJK_CHAR + "\\s*,", "g");
   var PROSE_HANKAKU_PERIOD_RE = new RegExp(CJK_CHAR + "\\s*\\.", "g");
+  var DECIMAL_COMMA_RE = /(?<=[0-9]),(?=[0-9]{1,2}(?![0-9]))/g;
   function proseBody(parsed) {
     return PROSE_SECTIONS.map(function (k) { return parsed.sections[k] || ""; }).join("\n");
   }
   function punctuationMix(parsed) {
     var prose = proseBody(parsed);
     if (!prose.trim()) return [];
+    var issues = [];
     var zComma = (prose.match(/、/g) || []).length, zPeriod = (prose.match(/。/g) || []).length;
     var hComma = (prose.match(PROSE_HANKAKU_COMMA_RE) || []).length;
     var hPeriod = (prose.match(PROSE_HANKAKU_PERIOD_RE) || []).length;
-    // トリガーは「文末記号の混在」: 全角「。」と半角「.」(CJK直後)が共存。
-    // （「，．」統一は正当で pdf取込NFKCにより ，．→,. になるため、コンマ差だけでは判定しない）
-    if (zPeriod > 0 && hPeriod > 0) return [iss("terminology", "warn",
+    // 文末記号の混在（最も強い不統一シグナル）: 全角「。」と半角「.」(CJK直後)が共存 → WARN
+    if (zPeriod > 0 && hPeriod > 0) issues.push(iss("terminology", "warn",
       "句読点（文末）の混在: 全角「。」と半角「.」を本文で混用（句点 。" + zPeriod + "/." + hPeriod + "・読点 、" + zComma + "/," + hComma + "）",
-      null, null, "本文の文末・文節区切りは「、」「。」（または「，」「．」）のどちらか一方に統一。（数値の小数点・桁区切り・文献の書誌は半角のままで可）")];
-    return [];
+      null, null, "本文の文末・文節区切りは「、」「。」（または「，」「．」）のどちらか一方に統一。（数値の小数点・桁区切り・文献の書誌は半角のままで可）"));
+    // 読点の混在: 全角「、」と半角「,」(CJK直後)が共存 → INFO（文末WARNが出ない時のみ）
+    else if (zComma > 0 && hComma > 0) issues.push(iss("terminology", "info",
+      "句読点（読点）の混在: 全角「、」と半角「,」を本文で混用（読点 、" + zComma + "/," + hComma + "）",
+      null, null, "本文の読点は「、」（または「，」）のどちらか一方に統一"));
+    // 小数点がカンマの誤字（例:「Neut 76,4%」→「76.4%」）→ WARN。桁区切り(,3桁)は除外
+    var seen = new Set(), m;
+    while ((m = DECIMAL_COMMA_RE.exec(prose)) !== null) {
+      var s = Math.max(0, m.index - 3), snippet = prose.slice(s, m.index + 3).trim();
+      var num = prose.slice(Math.max(0, m.index - 2), m.index + 3);
+      if (seen.has(num)) continue; seen.add(num);
+      issues.push(iss("terminology", "warn",
+        "小数点がカンマの可能性（誤字）: 「" + snippet + "」", null, snippet,
+        "小数点はピリオド「.」で記載（例:「76,4%」→「76.4%」）。桁区切りなら誤検出"));
+    }
+    return issues;
   }
   function editDistance(a, b, cap) {
     cap = cap || 3;
