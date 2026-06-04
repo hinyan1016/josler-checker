@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J-OSLER 病歴要約チェッカー（Web版）</title>
+<style>
+  :root{ --dark:#1A5276; --primary:#2E86C1; --fatal:#c0392b; --warn:#b9770e; --info:#2471a3; --ok:#1e8449;
+         --bg:#f4f6f8; --card:#fff; --line:#dfe4ea; --muted:#7f8c8d; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:"Meiryo","Yu Gothic UI",system-ui,sans-serif; background:var(--bg); color:#222; }
+  header{ background:var(--dark); color:#fff; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header h1{ font-size:16px; margin:0; font-weight:700; }
+  .privacy{ background:#1e8449; color:#fff; font-size:12px; padding:3px 8px; border-radius:12px; }
+  .wrap{ max-width:1280px; margin:0 auto; padding:12px 16px 80px; }
+  .toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  button{ font-family:inherit; font-size:14px; padding:8px 12px; border:1px solid var(--line); background:#fff; border-radius:8px; cursor:pointer; }
+  button:hover{ background:#eef3f7; }
+  button.primary{ background:var(--primary); color:#fff; border-color:var(--primary); font-weight:700; }
+  button.primary:hover{ background:var(--dark); }
+  button.ai{ background:#eef7ff; border-color:#bcdcf5; }
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media(max-width:860px){ .grid{ grid-template-columns:1fr; } }
+  .pane{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .pane h2{ font-size:13px; margin:0 0 6px; color:var(--dark); }
+  #editor{ width:100%; min-height:420px; resize:vertical; font-family:inherit; font-size:14px; line-height:1.6;
+           border:1px solid var(--line); border-radius:8px; padding:10px; }
+  #results{ min-height:420px; max-height:70vh; overflow:auto; font-size:13.5px; line-height:1.55; }
+  .sev-h{ font-weight:700; margin:10px 0 4px; }
+  .fatal{ color:var(--fatal); } .warn{ color:var(--warn); } .info{ color:var(--info); } .ok{ color:var(--ok); font-weight:700; }
+  .item{ margin:2px 0 6px; }
+  .muted{ color:var(--muted); }
+  .item .meta{ color:var(--muted); font-size:12.5px; display:block; margin-left:18px; }
+  .summary-bar{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line);
+                padding:8px 16px; display:flex; justify-content:space-between; align-items:center; font-weight:700; }
+  .count{ color:var(--muted); font-weight:400; }
+  .modal-bg{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px; z-index:50; }
+  .modal-bg.show{ display:flex; }
+  .modal{ background:#fff; border-radius:12px; max-width:760px; width:100%; max-height:88vh; overflow:auto; padding:16px; }
+  .modal h3{ margin:0 0 8px; color:var(--dark); }
+  .tips{ background:#f1f8ff; border:1px solid #cfe6fb; border-radius:8px; padding:10px; font-size:13px; white-space:pre-wrap; }
+  pre.prompt{ background:#fafafa; border:1px solid var(--line); border-radius:8px; padding:10px; max-height:38vh; overflow:auto;
+              white-space:pre-wrap; word-break:break-word; font-size:12.5px; }
+  table.reg{ border-collapse:collapse; width:100%; font-size:13px; }
+  table.reg th,table.reg td{ border:1px solid var(--line); padding:4px 6px; text-align:left; }
+  table.reg th{ background:#eef3f7; }
+  .cat{ font-weight:700; color:var(--dark); margin:12px 0 4px; }
+  .note{ font-size:12px; color:var(--muted); }
+  .right{ text-align:right; } .nowrap{ white-space:nowrap; }
+  input[type=file]{ display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🩺 J-OSLER 病歴要約チェッカー <span style="font-weight:400">Web版</span></h1>
+  <span class="privacy">🔒 すべてブラウザ内で処理・データは外部送信なし</span>
+</header>
+
+<div class="wrap">
+  <div class="toolbar">
+    <button class="primary" onclick="runCheck()">▶ チェック実行</button>
+    <button class="ai" onclick="aiRequest('review')">🧠 AIに内容レビュー依頼</button>
+    <button class="ai" onclick="aiRequest('revision')">✍️ AIに修正版を依頼</button>
+    <span style="flex:1"></span>
+    <label class="nowrap"><button onclick="document.getElementById('pdf').click()">📄 PDF取り込み</button></label>
+    <input type="file" id="pdf" accept="application/pdf" onchange="importPDF(this.files[0])">
+    <button onclick="loadSample('good')">良い例</button>
+    <button onclick="loadSample('bad')">悪い例</button>
+    <button onclick="showRegistry()">📖 登録略語一覧</button>
+    <button onclick="clearAll()">クリア</button>
+  </div>
+
+  <div class="grid">
+    <div class="pane">
+      <h2>病歴要約（Markdown）</h2>
+      <textarea id="editor" placeholder="ここに病歴要約を貼り付け、または「PDF取り込み」「良い例/悪い例」を押してください。&#10;見出しは ## 病歴 / ## 主な入院時現症 … の形式。"></textarea>
+    </div>
+    <div class="pane">
+      <h2>チェック結果</h2>
+      <div id="results"><span class="muted">「▶ チェック実行」を押すと、致命（赤）／警告（橙）／情報（青）で表示されます。</span></div>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:10px">
+    ※ このアプリは機械チェック（形式・PII・文字数・略語・薬剤・用語）専用です。診断の妥当性・鑑別・考察・文献の実在性などの
+    「内容」は <b>🧠/✍️ ボタンで生成AI</b> に委ねる二段構えです（基本情報の個人情報はAI送信前に自動除外）。
+    最終判断は PDF レンダリングで A4 2枚以内を確認してください。
+  </p>
+
+  <div style="margin-top:14px; padding:12px; background:#fff; border:1px solid var(--line); border-radius:10px; font-size:12.5px; color:#444; line-height:1.7">
+    <b>⚠️ 利用上の注意（必ずお読みください）</b>
+    <ul style="margin:6px 0 0; padding-left:20px">
+      <li><b>医療従事者向けの教育・自己点検支援ツール</b>です。診断・治療・患者管理に用いるものではありません。</li>
+      <li><b>結果は機械的な目安</b>であり、提出可否・医学的妥当性の<b>最終判断は指導医など人が行ってください</b>。検出漏れ・誤検出があり得ます。</li>
+      <li><b>個人情報の取扱い</b>: 入力した病歴要約は<b>このブラウザ内だけで処理され、サーバには送信されません</b>。ただし
+        <b>🧠/✍️ ボタンで作ったプロンプトを ChatGPT 等の生成AIに貼り付けると、その時点で外部サービスへ送信</b>されます
+        （基本情報の個人情報は自動除外しますが、本文の匿名化は利用者の責任で行ってください）。</li>
+      <li>登録略語一覧は公式手引きの確定リストではなく、本ツール独自の編集物です。</li>
+      <li>本ツールの利用により生じたいかなる結果についても、作者は責任を負いません。</li>
+    </ul>
+    <div class="note" style="margin-top:6px">J-OSLER 病歴要約チェッカー（Web版・オフライン動作）。日本内科学会・J-OSLER とは無関係の非公式ツールです。</div>
+  </div>
+</div>
+
+<div class="summary-bar">
+  <span id="summary" class="muted">未チェック</span>
+  <span id="count" class="count">0 字</span>
+</div>
+
+<!-- AI prompt modal -->
+<div class="modal-bg" id="aiModal">
+  <div class="modal">
+    <h3 id="aiTitle">AIに依頼</h3>
+    <div class="tips" id="aiTips"></div>
+    <p class="note">― 送信されるプロンプト（プレビュー）―</p>
+    <pre class="prompt" id="aiPrompt"></pre>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="primary" onclick="copyPrompt()">クリップボードに再コピー</button>
+      <button onclick="downloadPrompt()">.md で保存</button>
+      <span style="flex:1"></span>
+      <button onclick="closeModal('aiModal')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- registry modal -->
+<div class="modal-bg" id="regModal">
+  <div class="modal">
+    <h3>登録略語一覧</h3>
+    <div id="regBody"></div>
+    <div style="margin-top:10px"><button onclick="closeModal('regModal')">閉じる</button></div>
+  </div>
+</div>
+
+<script>window.JD = {"sectionAliases": {"基本情報": "basic", "病歴": "history", "現病歴": "history", "主な入院時現症": "exam", "入院時現症": "exam", "現症": "exam", "主な検査所見": "labs", "主要な検査所見": "labs", "検査所見": "labs", "プロブレムリスト": "problems", "プロブレム": "problems", "入院後経過と考察": "course", "経過と考察": "course", "入院後経過": "course", "経過": "course", "退院時処方": "rx", "処方": "rx", "総合考察": "discussion", "考察": "discussion", "添付画像": "images", "画像": "images", "文献": "refs", "参考文献": "refs"}, "canonicalOrder": ["basic", "history", "exam", "labs", "problems", "course", "rx", "discussion", "images", "refs"], "canonicalLabel": {"basic": "基本情報", "history": "病歴", "exam": "主な入院時現症", "labs": "主要な検査所見", "problems": "プロブレムリスト", "course": "入院後経過と考察", "rx": "退院時処方", "discussion": "総合考察", "images": "添付画像", "refs": "文献"}, "general": ["JCS", "GCS", "SpO2", "SaO2", "PaO2", "PaCO2", "BE", "A-aDO2", "BT", "BP", "HR", "RR", "PR", "NIBP", "SBP", "DBP", "MAP", "CVP", "WBC", "RBC", "Hb", "Ht", "MCV", "MCH", "MCHC", "Plt", "AST", "GOT", "ALT", "GPT", "LDH", "ALP", "γ-GTP", "γGTP", "T-Bil", "D-Bil", "I-Bil", "BUN", "Cre", "eGFR", "UA", "Na", "K", "Cl", "Ca", "P", "Mg", "CRP", "ESR", "TP", "Alb", "T-Cho", "LDL", "HDL", "TG", "HbA1c", "BS", "FBS", "PG", "PT", "PT-INR", "INR", "APTT", "Fib", "FDP", "D-dimer", "TSH", "FT3", "FT4", "TPO", "24時間Ccr", "U-Pro/Cr", "Xp", "CT", "MRI", "MRA", "MRCP", "US", "PET", "RI", "SPECT", "T1WI", "T2WI", "FLAIR", "DWI", "ADC", "STIR", "T2*", "SWI", "ICU", "CCU", "HCU", "ER", "OPE", "NPO", "DIV", "IV", "IM", "PO", "SC", "PR", "ECG", "EKG", "EEG", "EMG", "NCS", "EMR", "ESD", "PCI", "CABG", "TAVI", "PEG", "HD", "PD", "CHDF", "RRT", "ECMO", "IABP", "VAD", "NPPV", "IPPV", "HFNC", "CPAP", "BiPAP", "SAH", "ICH", "TIA", "DVT", "PE", "AMI", "STEMI", "NSTEMI", "ACS", "HF", "HFpEF", "HFrEF", "AF", "AFL", "PVC", "SSS", "AVB", "COPD", "ILD", "IIP", "IPF", "ARDS", "DKA", "HHS", "SIADH", "AKI", "CKD", "ESKD", "ESRD", "NAFLD", "MASLD", "IBD", "UC", "CD", "RA", "SLE", "SS", "SSc", "MCTD", "PM", "DM", "GVHD", "FEV1", "FVC", "%VC", "%FEV1", "DLCO", "NT-proBNP", "BNP", "hsTnI", "hsTnT", "TnI", "TnT", "CK-MB", "CK", "LD", "ABG", "VBG", "FOLFOX", "FOLFIRI", "FOLFIRINOX", "CHOP", "R-CHOP", "ABVD", "BEACOPP", "MRSA", "MSSA", "VRE", "ESBL", "CRE", "KP", "DAPT", "DOAC", "LMWH", "UFH", "NIHSS", "mRS", "GCS", "MMSE", "HDS-R", "MMT", "NCS", "EEG", "EMG", "ALSFRS-R", "EDSS", "MoCA-J", "CHADS2", "CHA2DS2-VASc", "HAS-BLED", "TIMI", "GRACE", "SYNTAX", "Killip", "TICI", "mTICI", "ASPECTS", "DWI-ASPECTS", "CTR", "LVEF", "LVDd", "LVDs", "FS", "E/A", "E/e'", "TR-PG", "M1", "M2", "M3", "A1", "A2", "P1", "P2", "ICA", "MCA", "ACA", "PCA", "VA", "BA", "ADL", "IADL", "PS", "ECOG-PS", "ANA", "ANCA", "PR3-ANCA", "MPO-ANCA", "CH50", "RF", "CCP", "NE", "LY", "MONO", "EOS", "NEUT", "LYMPH", "BAS", "BASO", "SEG", "FIO2", "FiO2", "HCO3", "GT", "GTP", "NAG", "ACE", "ARB", "ARNI", "SGLT2", "CCB", "PPI", "NK", "CTL", "Treg", "HIV", "HTLV", "HTLV-1", "SPOT", "IU", "PIP", "DIP", "MCP", "IVS", "LVPW", "LAD", "LCC", "RCC", "NCC", "TIF1", "MDA5", "ARS", "SS-A", "SS-B"], "generalByCategory": [["意識・呼吸循環", ["JCS", "GCS", "SpO2", "SaO2", "PaO2", "PaCO2", "BE", "A-aDO2"]], ["バイタル / 検体採取", ["BT", "BP", "HR", "RR", "PR", "NIBP", "SBP", "DBP", "MAP", "CVP"]], ["血液算定", ["WBC", "RBC", "Hb", "Ht", "MCV", "MCH", "MCHC", "Plt"]], ["生化学（肝・腎・電解質）", ["AST", "GOT", "ALT", "GPT", "LDH", "ALP", "γ-GTP", "γGTP", "T-Bil", "D-Bil", "I-Bil", "BUN", "Cre", "eGFR", "UA", "Na", "K", "Cl", "Ca", "P", "Mg", "CRP", "ESR"]], ["蛋白・脂質・糖代謝", ["TP", "Alb", "T-Cho", "LDL", "HDL", "TG", "HbA1c", "BS", "FBS", "PG"]], ["凝固", ["PT", "PT-INR", "INR", "APTT", "Fib", "FDP", "D-dimer"]], ["内分泌", ["TSH", "FT3", "FT4", "TPO"]], ["尿", ["24時間Ccr", "U-Pro/Cr"]], ["画像", ["Xp", "CT", "MRI", "MRA", "MRCP", "US", "PET", "RI", "SPECT", "T1WI", "T2WI", "FLAIR", "DWI", "ADC", "STIR", "T2*", "SWI"]], ["一般用語", ["ICU", "CCU", "HCU", "ER", "OPE", "NPO", "DIV", "IV", "IM", "PO", "SC", "PR"]], ["医学一般略", ["ECG", "EKG", "EEG", "EMG", "NCS", "EMR", "ESD", "PCI", "CABG", "TAVI"]], ["検査・治療一般", ["PEG", "HD", "PD", "CHDF", "RRT", "ECMO", "IABP", "VAD", "NPPV", "IPPV", "HFNC", "CPAP", "BiPAP"]], ["部位・解剖", ["SAH", "ICH", "TIA", "DVT", "PE", "AMI", "STEMI", "NSTEMI", "ACS", "HF", "HFpEF", "HFrEF", "AF", "AFL", "PVC", "SSS", "AVB"]], ["内科基幹", ["COPD", "ILD", "IIP", "IPF", "ARDS", "DKA", "HHS", "SIADH", "AKI", "CKD", "ESKD", "ESRD", "NAFLD", "MASLD", "IBD", "UC", "CD", "RA", "SLE", "SS", "SSc", "MCTD", "PM", "DM", "GVHD"]], ["検査・略語2", ["FEV1", "FVC", "%VC", "%FEV1", "DLCO", "NT-proBNP", "BNP", "hsTnI", "hsTnT", "TnI", "TnT", "CK-MB", "CK", "LD"]], ["ガス分析", ["ABG", "VBG"]], ["化学療法", ["FOLFOX", "FOLFIRI", "FOLFIRINOX", "CHOP", "R-CHOP", "ABVD", "BEACOPP"]], ["抗菌", ["MRSA", "MSSA", "VRE", "ESBL", "CRE", "KP"]], ["抗血栓", ["DAPT", "DOAC", "LMWH", "UFH"]], ["神経系臨床スコア・略語", ["NIHSS", "mRS", "GCS", "MMSE", "HDS-R", "MMT", "NCS", "EEG", "EMG", "ALSFRS-R", "EDSS", "MoCA-J"]], ["循環・脳卒中リスクスコア", ["CHADS2", "CHA2DS2-VASc", "HAS-BLED", "TIMI", "GRACE", "SYNTAX", "Killip"]], ["画像評価指標", ["TICI", "mTICI", "ASPECTS", "DWI-ASPECTS", "CTR", "LVEF", "LVDd", "LVDs", "FS", "E/A", "E/e'", "TR-PG"]], ["解剖区分（中大脳動脈など）", ["M1", "M2", "M3", "A1", "A2", "P1", "P2", "ICA", "MCA", "ACA", "PCA", "VA", "BA"]], ["その他臨床ADL/QOL", ["ADL", "IADL", "PS", "ECOG-PS"]], ["自己抗体・補体・免疫血清", ["ANA", "ANCA", "PR3-ANCA", "MPO-ANCA", "CH50", "RF", "CCP"]], ["白血球分画（大文字表記）", ["NE", "LY", "MONO", "EOS", "NEUT", "LYMPH", "BAS", "BASO", "SEG"]], ["血液ガス追加", ["FIO2", "FiO2", "HCO3"]], ["肝胆道酵素（γ-GT/γ-GTP の英字抽出分）", ["GT", "GTP"]], ["腎・尿細管", ["NAG"]], ["薬剤クラス", ["ACE", "ARB", "ARNI", "SGLT2", "CCB", "PPI"]], ["免疫細胞", ["NK", "CTL", "Treg"]], ["感染症", ["HIV", "HTLV", "HTLV-1", "SPOT"]], ["単位", ["IU"]], ["手指関節", ["PIP", "DIP", "MCP"]], ["心エコー（壁厚・弁尖・左房径）", ["IVS", "LVPW", "LAD", "LCC", "RCC", "NCC"]], ["筋炎特異・関連自己抗体", ["TIF1", "MDA5", "ARS", "SS-A", "SS-B"]]], "glossary": {"JCS": ["Japan Coma Scale", "ジャパン・コーマ・スケール（意識レベル）"], "GCS": ["Glasgow Coma Scale", "グラスゴー・コーマ・スケール（意識レベル）"], "SpO2": ["percutaneous oxygen saturation", "経皮的動脈血酸素飽和度"], "SaO2": ["arterial oxygen saturation", "動脈血酸素飽和度"], "PaO2": ["arterial partial pressure of oxygen", "動脈血酸素分圧"], "PaCO2": ["arterial partial pressure of carbon dioxide", "動脈血二酸化炭素分圧"], "BE": ["base excess", "塩基過剰"], "A-aDO2": ["alveolar-arterial oxygen difference", "肺胞気-動脈血酸素分圧較差"], "BT": ["body temperature", "体温"], "BP": ["blood pressure", "血圧"], "HR": ["heart rate", "心拍数"], "RR": ["respiratory rate", "呼吸数"], "PR": ["pulse rate（文脈で per rectum）", "脈拍（文脈により直腸内投与）"], "NIBP": ["non-invasive blood pressure", "非観血的血圧"], "SBP": ["systolic blood pressure", "収縮期血圧"], "DBP": ["diastolic blood pressure", "拡張期血圧"], "MAP": ["mean arterial pressure", "平均動脈圧"], "CVP": ["central venous pressure", "中心静脈圧"], "WBC": ["white blood cell count", "白血球数"], "RBC": ["red blood cell count", "赤血球数"], "Hb": ["hemoglobin", "ヘモグロビン"], "Ht": ["hematocrit", "ヘマトクリット"], "MCV": ["mean corpuscular volume", "平均赤血球容積"], "MCH": ["mean corpuscular hemoglobin", "平均赤血球ヘモグロビン量"], "MCHC": ["mean corpuscular hemoglobin concentration", "平均赤血球ヘモグロビン濃度"], "Plt": ["platelet count", "血小板数"], "AST": ["aspartate aminotransferase", "アスパラギン酸アミノトランスフェラーゼ"], "GOT": ["glutamic oxaloacetic transaminase", "（ASTの旧称）"], "ALT": ["alanine aminotransferase", "アラニンアミノトランスフェラーゼ"], "GPT": ["glutamic pyruvic transaminase", "（ALTの旧称）"], "LDH": ["lactate dehydrogenase", "乳酸脱水素酵素"], "ALP": ["alkaline phosphatase", "アルカリホスファターゼ"], "γ-GTP": ["gamma-glutamyl transpeptidase", "γ-グルタミルトランスペプチダーゼ"], "γGTP": ["gamma-glutamyl transpeptidase", "γ-グルタミルトランスペプチダーゼ"], "T-Bil": ["total bilirubin", "総ビリルビン"], "D-Bil": ["direct bilirubin", "直接ビリルビン"], "I-Bil": ["indirect bilirubin", "間接ビリルビン"], "BUN": ["blood urea nitrogen", "血中尿素窒素"], "Cre": ["creatinine", "クレアチニン"], "eGFR": ["estimated glomerular filtration rate", "推算糸球体濾過量"], "UA": ["uric acid", "尿酸"], "Na": ["sodium", "ナトリウム"], "K": ["potassium", "カリウム"], "Cl": ["chloride", "クロール（塩化物）"], "Ca": ["calcium", "カルシウム"], "P": ["phosphorus", "リン（無機リン）"], "Mg": ["magnesium", "マグネシウム"], "CRP": ["C-reactive protein", "C反応性蛋白"], "ESR": ["erythrocyte sedimentation rate", "赤血球沈降速度（赤沈）"], "TP": ["total protein", "総蛋白"], "Alb": ["albumin", "アルブミン"], "T-Cho": ["total cholesterol", "総コレステロール"], "LDL": ["low-density lipoprotein cholesterol", "LDLコレステロール"], "HDL": ["high-density lipoprotein cholesterol", "HDLコレステロール"], "TG": ["triglyceride", "中性脂肪（トリグリセリド）"], "HbA1c": ["hemoglobin A1c", "ヘモグロビンA1c"], "BS": ["blood sugar", "血糖"], "FBS": ["fasting blood sugar", "空腹時血糖"], "PG": ["plasma glucose", "血漿血糖"], "PT": ["prothrombin time", "プロトロンビン時間"], "PT-INR": ["prothrombin time-international normalized ratio", "PT国際標準比"], "INR": ["international normalized ratio", "国際標準比"], "APTT": ["activated partial thromboplastin time", "活性化部分トロンボプラスチン時間"], "Fib": ["fibrinogen", "フィブリノゲン"], "FDP": ["fibrin/fibrinogen degradation products", "フィブリン・フィブリノゲン分解産物"], "D-dimer": ["D-dimer", "Dダイマー"], "TSH": ["thyroid-stimulating hormone", "甲状腺刺激ホルモン"], "FT3": ["free triiodothyronine", "遊離トリヨードサイロニン"], "FT4": ["free thyroxine", "遊離サイロキシン"], "TPO": ["thyroid peroxidase", "甲状腺ペルオキシダーゼ"], "24時間Ccr": ["24-hour creatinine clearance", "24時間クレアチニンクリアランス"], "U-Pro/Cr": ["urine protein-to-creatinine ratio", "尿蛋白クレアチニン比"], "Xp": ["X-ray photograph", "単純X線写真"], "CT": ["computed tomography", "コンピュータ断層撮影"], "MRI": ["magnetic resonance imaging", "磁気共鳴画像"], "MRA": ["magnetic resonance angiography", "MR血管撮影"], "MRCP": ["magnetic resonance cholangiopancreatography", "MR胆管膵管撮影"], "US": ["ultrasonography", "超音波検査"], "PET": ["positron emission tomography", "陽電子放出断層撮影"], "RI": ["radioisotope", "放射性同位元素（核医学）"], "SPECT": ["single-photon emission computed tomography", "単一光子放射断層撮影"], "T1WI": ["T1-weighted image", "T1強調画像"], "T2WI": ["T2-weighted image", "T2強調画像"], "FLAIR": ["fluid-attenuated inversion recovery", "FLAIR画像"], "DWI": ["diffusion-weighted image", "拡散強調画像"], "ADC": ["apparent diffusion coefficient", "見かけの拡散係数"], "STIR": ["short-tau inversion recovery", "STIR画像"], "T2*": ["T2-star weighted image", "T2スター強調画像"], "SWI": ["susceptibility-weighted imaging", "磁化率強調画像"], "ICU": ["intensive care unit", "集中治療室"], "CCU": ["coronary care unit", "冠疾患集中治療室"], "HCU": ["high care unit", "高度治療室"], "ER": ["emergency room", "救急外来"], "OPE": ["operation", "手術"], "NPO": ["nil per os", "絶飲食"], "DIV": ["drip infusion in vein", "点滴静注"], "IV": ["intravenous", "静脈内（投与）"], "IM": ["intramuscular", "筋肉内（投与）"], "PO": ["per os", "経口（投与）"], "SC": ["subcutaneous", "皮下（投与）"], "ECG": ["electrocardiogram", "心電図"], "EKG": ["electrocardiogram", "心電図（ECGと同義）"], "EEG": ["electroencephalogram", "脳波"], "EMG": ["electromyogram", "筋電図"], "NCS": ["nerve conduction study", "神経伝導検査"], "EMR": ["endoscopic mucosal resection", "内視鏡的粘膜切除術"], "ESD": ["endoscopic submucosal dissection", "内視鏡的粘膜下層剥離術"], "PCI": ["percutaneous coronary intervention", "経皮的冠動脈インターベンション"], "CABG": ["coronary artery bypass grafting", "冠動脈バイパス術"], "TAVI": ["transcatheter aortic valve implantation", "経カテーテル大動脈弁置換術"], "PEG": ["percutaneous endoscopic gastrostomy", "経皮内視鏡的胃瘻造設術"], "HD": ["hemodialysis", "血液透析"], "PD": ["peritoneal dialysis", "腹膜透析"], "CHDF": ["continuous hemodiafiltration", "持続的血液濾過透析"], "RRT": ["renal replacement therapy", "腎代替療法"], "ECMO": ["extracorporeal membrane oxygenation", "体外式膜型人工肺"], "IABP": ["intra-aortic balloon pumping", "大動脈内バルーンパンピング"], "VAD": ["ventricular assist device", "補助人工心臓"], "NPPV": ["non-invasive positive pressure ventilation", "非侵襲的陽圧換気"], "IPPV": ["invasive positive pressure ventilation", "侵襲的陽圧換気"], "HFNC": ["high-flow nasal cannula", "高流量鼻カニュラ"], "CPAP": ["continuous positive airway pressure", "持続陽圧呼吸"], "BiPAP": ["bilevel positive airway pressure", "二相性陽圧呼吸"], "SAH": ["subarachnoid hemorrhage", "くも膜下出血"], "ICH": ["intracerebral hemorrhage", "脳内出血"], "TIA": ["transient ischemic attack", "一過性脳虚血発作"], "DVT": ["deep vein thrombosis", "深部静脈血栓症"], "PE": ["pulmonary embolism", "肺塞栓症"], "AMI": ["acute myocardial infarction", "急性心筋梗塞"], "STEMI": ["ST-elevation myocardial infarction", "ST上昇型心筋梗塞"], "NSTEMI": ["non-ST-elevation myocardial infarction", "非ST上昇型心筋梗塞"], "ACS": ["acute coronary syndrome", "急性冠症候群"], "HF": ["heart failure", "心不全"], "HFpEF": ["heart failure with preserved ejection fraction", "駆出率の保たれた心不全"], "HFrEF": ["heart failure with reduced ejection fraction", "駆出率の低下した心不全"], "AF": ["atrial fibrillation", "心房細動"], "AFL": ["atrial flutter", "心房粗動"], "PVC": ["premature ventricular contraction", "心室期外収縮"], "SSS": ["sick sinus syndrome", "洞不全症候群"], "AVB": ["atrioventricular block", "房室ブロック"], "COPD": ["chronic obstructive pulmonary disease", "慢性閉塞性肺疾患"], "ILD": ["interstitial lung disease", "間質性肺疾患"], "IIP": ["idiopathic interstitial pneumonia", "特発性間質性肺炎"], "IPF": ["idiopathic pulmonary fibrosis", "特発性肺線維症"], "ARDS": ["acute respiratory distress syndrome", "急性呼吸窮迫症候群"], "DKA": ["diabetic ketoacidosis", "糖尿病性ケトアシドーシス"], "HHS": ["hyperosmolar hyperglycemic syndrome", "高浸透圧高血糖症候群"], "SIADH": ["syndrome of inappropriate antidiuretic hormone secretion", "抗利尿ホルモン不適合分泌症候群"], "AKI": ["acute kidney injury", "急性腎障害"], "CKD": ["chronic kidney disease", "慢性腎臓病"], "ESKD": ["end-stage kidney disease", "末期腎不全"], "ESRD": ["end-stage renal disease", "末期腎不全"], "NAFLD": ["non-alcoholic fatty liver disease", "非アルコール性脂肪性肝疾患"], "MASLD": ["metabolic dysfunction-associated steatotic liver disease", "代謝機能障害関連脂肪性肝疾患"], "IBD": ["inflammatory bowel disease", "炎症性腸疾患"], "UC": ["ulcerative colitis", "潰瘍性大腸炎"], "CD": ["Crohn disease", "クローン病"], "RA": ["rheumatoid arthritis", "関節リウマチ"], "SLE": ["systemic lupus erythematosus", "全身性エリテマトーデス"], "SS": ["Sjögren syndrome", "シェーグレン症候群"], "SSc": ["systemic sclerosis", "全身性強皮症"], "MCTD": ["mixed connective tissue disease", "混合性結合組織病"], "PM": ["polymyositis", "多発性筋炎"], "DM": ["diabetes mellitus（文脈で dermatomyositis）", "糖尿病（文脈により皮膚筋炎）"], "GVHD": ["graft-versus-host disease", "移植片対宿主病"], "FEV1": ["forced expiratory volume in 1 second", "1秒量"], "FVC": ["forced vital capacity", "努力性肺活量"], "%VC": ["percent vital capacity", "％肺活量"], "%FEV1": ["percent forced expiratory volume in 1 second", "対標準1秒量（％FEV1）"], "DLCO": ["diffusing capacity of the lung for carbon monoxide", "肺拡散能"], "NT-proBNP": ["N-terminal pro-brain natriuretic peptide", "N末端プロ脳性ナトリウム利尿ペプチド"], "BNP": ["brain natriuretic peptide", "脳性ナトリウム利尿ペプチド"], "hsTnI": ["high-sensitivity troponin I", "高感度トロポニンI"], "hsTnT": ["high-sensitivity troponin T", "高感度トロポニンT"], "TnI": ["troponin I", "トロポニンI"], "TnT": ["troponin T", "トロポニンT"], "CK-MB": ["creatine kinase MB isoenzyme", "クレアチンキナーゼMB分画"], "CK": ["creatine kinase", "クレアチンキナーゼ"], "LD": ["lactate dehydrogenase", "乳酸脱水素酵素（＝LDH）"], "ABG": ["arterial blood gas", "動脈血ガス"], "VBG": ["venous blood gas", "静脈血ガス"], "FOLFOX": ["folinic acid + fluorouracil + oxaliplatin", "FOLFOX療法"], "FOLFIRI": ["folinic acid + fluorouracil + irinotecan", "FOLFIRI療法"], "FOLFIRINOX": ["folinic acid + fluorouracil + irinotecan + oxaliplatin", "FOLFIRINOX療法"], "CHOP": ["cyclophosphamide + doxorubicin + vincristine + prednisolone", "CHOP療法"], "R-CHOP": ["rituximab + CHOP", "R-CHOP療法"], "ABVD": ["doxorubicin + bleomycin + vinblastine + dacarbazine", "ABVD療法"], "BEACOPP": ["bleomycin + etoposide + doxorubicin + cyclophosphamide + vincristine + procarbazine + prednisolone", "BEACOPP療法"], "MRSA": ["methicillin-resistant Staphylococcus aureus", "メチシリン耐性黄色ブドウ球菌"], "MSSA": ["methicillin-susceptible Staphylococcus aureus", "メチシリン感性黄色ブドウ球菌"], "VRE": ["vancomycin-resistant Enterococcus", "バンコマイシン耐性腸球菌"], "ESBL": ["extended-spectrum beta-lactamase", "基質特異性拡張型βラクタマーゼ（産生菌）"], "CRE": ["carbapenem-resistant Enterobacterales", "カルバペネム耐性腸内細菌目細菌"], "KP": ["Klebsiella pneumoniae", "肺炎桿菌（クレブシエラ）"], "DAPT": ["dual antiplatelet therapy", "抗血小板薬2剤併用療法"], "DOAC": ["direct oral anticoagulant", "直接経口抗凝固薬"], "LMWH": ["low-molecular-weight heparin", "低分子ヘパリン"], "UFH": ["unfractionated heparin", "未分画ヘパリン"], "NIHSS": ["National Institutes of Health Stroke Scale", "NIH脳卒中スケール"], "mRS": ["modified Rankin Scale", "修正Rankinスケール"], "MMSE": ["Mini-Mental State Examination", "ミニメンタルステート検査"], "HDS-R": ["Revised Hasegawa Dementia Scale", "改訂長谷川式簡易知能評価スケール"], "MMT": ["manual muscle testing", "徒手筋力テスト"], "ALSFRS-R": ["ALS Functional Rating Scale-Revised", "改訂ALS機能評価スケール"], "EDSS": ["Expanded Disability Status Scale", "総合障害度スケール"], "MoCA-J": ["Montreal Cognitive Assessment-Japanese", "日本語版MoCA（認知機能検査）"], "CHADS2": ["CHADS2 score", "CHADS2スコア（心房細動の脳梗塞リスク）"], "CHA2DS2-VASc": ["CHA2DS2-VASc score", "CHA2DS2-VAScスコア（脳梗塞リスク）"], "HAS-BLED": ["HAS-BLED score", "HAS-BLEDスコア（出血リスク）"], "TIMI": ["Thrombolysis in Myocardial Infarction", "TIMIリスクスコア／血流分類"], "GRACE": ["Global Registry of Acute Coronary Events", "GRACEリスクスコア"], "SYNTAX": ["SYNTAX score", "SYNTAXスコア（冠動脈病変複雑度）"], "Killip": ["Killip classification", "Killip分類（急性心不全重症度）"], "TICI": ["Thrombolysis in Cerebral Infarction", "脳梗塞再灌流グレード"], "mTICI": ["modified TICI", "修正TICIグレード"], "ASPECTS": ["Alberta Stroke Program Early CT Score", "早期虚血性変化スコア"], "DWI-ASPECTS": ["DWI-based ASPECTS", "拡散強調画像ASPECTS"], "CTR": ["cardiothoracic ratio", "心胸郭比"], "LVEF": ["left ventricular ejection fraction", "左室駆出率"], "LVDd": ["left ventricular end-diastolic dimension", "左室拡張末期径"], "LVDs": ["left ventricular end-systolic dimension", "左室収縮末期径"], "FS": ["fractional shortening", "左室内径短縮率"], "E/A": ["E/A ratio", "E/A比（左室拡張能の指標）"], "E/e'": ["E/e' ratio", "E/e'比（左房圧の指標）"], "TR-PG": ["tricuspid regurgitation pressure gradient", "三尖弁逆流圧較差"], "M1": ["middle cerebral artery M1 segment", "中大脳動脈M1部"], "M2": ["middle cerebral artery M2 segment", "中大脳動脈M2部"], "M3": ["middle cerebral artery M3 segment", "中大脳動脈M3部"], "A1": ["anterior cerebral artery A1 segment", "前大脳動脈A1部"], "A2": ["anterior cerebral artery A2 segment", "前大脳動脈A2部"], "P1": ["posterior cerebral artery P1 segment", "後大脳動脈P1部"], "P2": ["posterior cerebral artery P2 segment", "後大脳動脈P2部"], "ICA": ["internal carotid artery", "内頸動脈"], "MCA": ["middle cerebral artery", "中大脳動脈"], "ACA": ["anterior cerebral artery", "前大脳動脈"], "PCA": ["posterior cerebral artery", "後大脳動脈"], "VA": ["vertebral artery", "椎骨動脈"], "BA": ["basilar artery", "脳底動脈"], "ADL": ["activities of daily living", "日常生活動作"], "IADL": ["instrumental activities of daily living", "手段的日常生活動作"], "PS": ["performance status", "全身状態（パフォーマンスステータス）"], "ECOG-PS": ["ECOG performance status", "ECOG全身状態スコア"], "ANA": ["antinuclear antibody", "抗核抗体"], "ANCA": ["anti-neutrophil cytoplasmic antibody", "抗好中球細胞質抗体"], "PR3-ANCA": ["proteinase 3-ANCA", "PR3-ANCA"], "MPO-ANCA": ["myeloperoxidase-ANCA", "MPO-ANCA"], "CH50": ["50% hemolytic complement activity", "血清補体価"], "RF": ["rheumatoid factor", "リウマトイド因子"], "CCP": ["anti-cyclic citrullinated peptide antibody", "抗CCP抗体"], "NE": ["neutrophil", "好中球（白血球分画）"], "LY": ["lymphocyte", "リンパ球（白血球分画）"], "MONO": ["monocyte", "単球"], "EOS": ["eosinophil", "好酸球"], "NEUT": ["neutrophil", "好中球"], "LYMPH": ["lymphocyte", "リンパ球"], "BAS": ["basophil", "好塩基球"], "BASO": ["basophil", "好塩基球"], "SEG": ["segmented neutrophil", "分葉核好中球"], "FIO2": ["fraction of inspired oxygen", "吸入酸素濃度"], "FiO2": ["fraction of inspired oxygen", "吸入酸素濃度"], "HCO3": ["bicarbonate", "重炭酸イオン"], "GT": ["gamma-glutamyl transferase", "γ-グルタミルトランスフェラーゼ（γ-GT）"], "GTP": ["gamma-glutamyl transpeptidase", "γ-グルタミルトランスペプチダーゼ（γ-GTP）"], "NAG": ["N-acetyl-beta-D-glucosaminidase", "N-アセチル-β-D-グルコサミニダーゼ（尿細管障害）"], "ACE": ["angiotensin-converting enzyme (inhibitor)", "アンジオテンシン変換酵素（阻害薬＝ACE阻害薬）"], "ARB": ["angiotensin II receptor blocker", "アンジオテンシンII受容体拮抗薬"], "ARNI": ["angiotensin receptor-neprilysin inhibitor", "アンジオテンシン受容体ネプリライシン阻害薬"], "SGLT2": ["sodium-glucose cotransporter 2 (inhibitor)", "SGLT2（阻害薬）"], "CCB": ["calcium channel blocker", "カルシウム拮抗薬"], "PPI": ["proton pump inhibitor", "プロトンポンプ阻害薬"], "NK": ["natural killer cell", "ナチュラルキラー細胞"], "CTL": ["cytotoxic T lymphocyte", "細胞傷害性Tリンパ球"], "Treg": ["regulatory T cell", "制御性T細胞"], "HIV": ["human immunodeficiency virus", "ヒト免疫不全ウイルス"], "HTLV": ["human T-cell leukemia virus", "ヒトT細胞白血病ウイルス"], "HTLV-1": ["human T-cell leukemia virus type 1", "ヒトT細胞白血病ウイルス1型"], "SPOT": ["T-SPOT.TB (interferon-gamma release assay)", "結核IGRA（T-SPOT.TB）"], "IU": ["international unit", "国際単位"], "PIP": ["proximal interphalangeal joint", "近位指節間関節"], "DIP": ["distal interphalangeal joint", "遠位指節間関節"], "MCP": ["metacarpophalangeal joint", "中手指節関節"], "IVS": ["interventricular septum", "心室中隔（厚）"], "LVPW": ["left ventricular posterior wall", "左室後壁（厚）"], "LAD": ["left atrial dimension（文脈で left anterior descending）", "左房径（文脈により左前下行枝）"], "LCC": ["left coronary cusp", "左冠尖"], "RCC": ["right coronary cusp", "右冠尖"], "NCC": ["non-coronary cusp", "無冠尖"], "TIF1": ["transcription intermediary factor 1", "転写中間因子1（抗TIF1-γ抗体）"], "MDA5": ["melanoma differentiation-associated gene 5", "抗MDA5抗体の対応抗原"], "ARS": ["aminoacyl-tRNA synthetase", "アミノアシルtRNA合成酵素（抗ARS抗体）"], "SS-A": ["Sjögren syndrome-related antigen A (Ro)", "SS-A抗原（Ro）"], "SS-B": ["Sjögren syndrome-related antigen B (La)", "SS-B抗原（La）"]}, "subspecialty": {"TBLC": "経気管支クライオ肺生検", "TAVI": "経カテーテル大動脈弁置換術", "ESD": "内視鏡的粘膜下層剥離術", "EUS-FNA": "超音波内視鏡下穿刺吸引法", "TIPS": "経頸静脈的肝内門脈大循環シャント術", "DAPT": "抗血小板薬2剤併用療法", "DOAC": "直接経口抗凝固薬", "HFpEF": "駆出率の保たれた心不全", "HFrEF": "駆出率の低下した心不全", "CART": "腹水濾過濃縮再静注法", "EVT": "血管内治療", "TACE": "肝動脈化学塞栓療法", "RFA": "ラジオ波焼灼療法", "PTCD": "経皮経肝胆道ドレナージ", "ERCP": "内視鏡的逆行性胆管膵管造影", "EST": "内視鏡的乳頭切開術", "ENBD": "内視鏡的経鼻胆道ドレナージ", "PCI": "経皮的冠動脈インターベンション", "CABG": "冠動脈バイパス術", "VATS": "胸腔鏡下手術", "ICD": "植込み型除細動器", "CRT": "心臓再同期療法", "CRT-D": "両室ペーシング機能付き植込み型除細動器", "ASO": "閉塞性動脈硬化症", "PAD": "末梢動脈疾患", "DVT": "深部静脈血栓症", "ESS": "内視鏡的副鼻腔手術", "FESS": "機能的内視鏡下副鼻腔手術", "GVHD": "移植片対宿主病", "HSCT": "造血幹細胞移植"}, "bannedDx": {"DM": "糖尿病（または皮膚筋炎）", "HT": "高血圧症", "HTN": "高血圧症", "AKI": "急性腎障害", "CKD": "慢性腎臓病", "COPD": "慢性閉塞性肺疾患", "HF": "心不全", "CHF": "うっ血性心不全", "SAH": "くも膜下出血", "AMI": "急性心筋梗塞", "STEMI": "ST上昇型心筋梗塞", "NSTEMI": "非ST上昇型心筋梗塞", "ACS": "急性冠症候群", "AF": "心房細動", "AFL": "心房粗動", "PE": "肺塞栓症", "DVT": "深部静脈血栓症", "RA": "関節リウマチ", "SLE": "全身性エリテマトーデス", "MS": "僧帽弁狭窄症（または多発性硬化症）", "AS": "大動脈弁狭窄症", "AR": "大動脈弁閉鎖不全症", "MR": "僧帽弁閉鎖不全症", "ILD": "間質性肺疾患", "IPF": "特発性肺線維症", "DKA": "糖尿病性ケトアシドーシス", "HHS": "高浸透圧高血糖症候群", "IBD": "炎症性腸疾患", "UC": "潰瘍性大腸炎", "CD": "クローン病", "GERD": "胃食道逆流症", "PUD": "消化性潰瘍", "NAFLD": "非アルコール性脂肪性肝疾患", "MASLD": "代謝機能障害関連脂肪性肝疾患", "HCC": "肝細胞癌", "DLBCL": "びまん性大細胞型B細胞リンパ腫", "AML": "急性骨髄性白血病", "ALL": "急性リンパ性白血病", "CML": "慢性骨髄性白血病", "CLL": "慢性リンパ性白血病", "MM": "多発性骨髄腫", "MDS": "骨髄異形成症候群"}, "bannedTerms": {"抗生剤": {"recommended": "抗菌薬", "reason": "厚労省・感染症学会の公式名称は「抗菌薬」", "severity": "warn"}, "抗生物質": {"recommended": "抗菌薬", "reason": "厚労省・感染症学会の公式名称は「抗菌薬」", "severity": "warn"}, "呼吸苦": {"recommended": "呼吸困難", "reason": "患者主観表現と医学用語の混在を避ける", "severity": "warn"}, "呼吸困難感": {"recommended": "呼吸困難", "reason": "「感」を付けず医学用語に統一", "severity": "warn"}, "食思不振": {"recommended": "食欲不振", "reason": "教科書表記は「食欲不振」", "severity": "warn"}, "動悸感": {"recommended": "動悸", "reason": "「感」を付けない", "severity": "warn"}, "浮腫感": {"recommended": "浮腫", "reason": "「感」を付けない", "severity": "warn"}, "めまい感": {"recommended": "めまい", "reason": "「感」を付けない", "severity": "warn"}, "ふらつき感": {"recommended": "ふらつき", "reason": "「感」を付けない", "severity": "warn"}, "倦怠": {"recommended": "全身倦怠感", "reason": "用語として「倦怠」単独は不可、「全身倦怠感」", "severity": "info"}, "みぞおち": {"recommended": "心窩部", "reason": "口語表現は避け医学用語に", "severity": "warn"}, "みぞおち痛": {"recommended": "心窩部痛", "reason": "口語表現は避け医学用語に", "severity": "warn"}, "貧血(+)": {"recommended": "貧血あり / Hb ○ g/dL の貧血", "reason": "(+) 表記の乱用は避ける", "severity": "info"}, "眼瞼結膜貧血(+)": {"recommended": "眼瞼結膜貧血あり", "reason": "(+) 表記の乱用は避ける", "severity": "info"}, "頭痛感": {"recommended": "頭痛", "reason": "「感」を付けない", "severity": "warn"}, "嘔気感": {"recommended": "嘔気 / 悪心", "reason": "「感」を付けない", "severity": "warn"}, "胸痛感": {"recommended": "胸痛", "reason": "「感」を付けない", "severity": "warn"}, "腹痛感": {"recommended": "腹痛", "reason": "「感」を付けない", "severity": "warn"}}, "brandDrugs": {"ニューロタン": "ロサルタンカリウム", "ハルナール": "タムスロシン塩酸塩", "ノルバスク": "アムロジピン", "アムロジン": "アムロジピン", "ブロプレス": "カンデサルタン", "オルメテック": "オルメサルタン", "ディオバン": "バルサルタン", "ミカルディス": "テルミサルタン", "アジルバ": "アジルサルタン", "プログラフ": "タクロリムス", "ネオーラル": "シクロスポリン", "セルセプト": "ミコフェノール酸モフェチル", "リツキサン": "リツキシマブ", "アクテムラ": "トシリズマブ", "ヒュミラ": "アダリムマブ", "レミケード": "インフリキシマブ", "エンブレル": "エタネルセプト", "ステラーラ": "ウステキヌマブ", "コセンティクス": "セクキヌマブ", "オルミエント": "バリシチニブ", "ジャヌビア": "シタグリプチン", "トラゼンタ": "リナグリプチン", "テネリア": "テネリグリプチン", "ジャディアンス": "エンパグリフロジン", "フォシーガ": "ダパグリフロジン", "カナグル": "カナグリフロジン", "スーグラ": "イプラグリフロジン", "ルセフィ": "ルセオグリフロジン", "デベルザ": "トホグリフロジン", "アクトス": "ピオグリタゾン", "メトグルコ": "メトホルミン", "オイグルコン": "グリベンクラミド", "アマリール": "グリメピリド", "グリミクロン": "グリクラジド", "リベルサス": "セマグルチド", "オゼンピック": "セマグルチド", "ビクトーザ": "リラグルチド", "トルリシティ": "デュラグルチド", "マンジャロ": "チルゼパチド", "ラシックス": "フロセミド", "ダイアート": "アゾセミド", "ルプラック": "トラセミド", "ナトリックス": "インダパミド", "アルダクトン": "スピロノラクトン", "セララ": "エプレレノン", "ミネブロ": "エサキセレノン", "プロタノール": "L-イソプレナリン", "コアテック": "オルプリノン", "ハンプ": "カルペリチド", "メインテート": "ビソプロロール", "テノーミン": "アテノロール", "アーチスト": "カルベジロール", "ワソラン": "ベラパミル", "ヘルベッサー": "ジルチアゼム", "サンリズム": "ピルシカイニド", "リスモダン": "ジソピラミド", "アンカロン": "アミオダロン", "シベノール": "シベンゾリン", "ベプリコール": "ベプリジル", "メキシチール": "メキシレチン", "クレストール": "ロスバスタチン", "リピトール": "アトルバスタチン", "リバロ": "ピタバスタチン", "メバロチン": "プラバスタチン", "リポバス": "シンバスタチン", "ローコール": "フルバスタチン", "ゼチーア": "エゼチミブ", "プラビックス": "クロピドグレル", "エフィエント": "プラスグレル", "ブリリンタ": "チカグレロル", "プレタール": "シロスタゾール", "オパルモン": "リマプロスト", "プロサイリン": "ベラプロスト", "ワーファリン": "ワルファリン", "プラザキサ": "ダビガトラン", "イグザレルト": "リバーロキサバン", "エリキュース": "アピキサバン", "リクシアナ": "エドキサバン", "バイアスピリン": "アスピリン", "ロキソニン": "ロキソプロフェン", "ボルタレン": "ジクロフェナク", "セレコックス": "セレコキシブ", "カロナール": "アセトアミノフェン", "アセリオ": "アセトアミノフェン", "ネキシウム": "エソメプラゾール", "タケキャブ": "ボノプラザン", "パリエット": "ラベプラゾール", "オメプラール": "オメプラゾール", "タケプロン": "ランソプラゾール", "ガスター": "ファモチジン", "プロテカジン": "ラフチジン", "セルベックス": "テプレノン", "ムコスタ": "レバミピド", "プレドニン": "プレドニゾロン", "メドロール": "メチルプレドニゾロン", "ソル・メドロール": "メチルプレドニゾロンコハク酸エステル", "リンデロン": "ベタメタゾン", "デカドロン": "デキサメタゾン", "アザニン": "アザチオプリン", "イムラン": "アザチオプリン", "エンドキサン": "シクロホスファミド", "メソトレキセート": "メトトレキサート", "リウマトレックス": "メトトレキサート", "ペニシリンG": "ベンジルペニシリン", "サワシリン": "アモキシシリン", "オーグメンチン": "アモキシシリン・クラブラン酸", "ユナシン": "アンピシリン・スルバクタム", "セフメタゾン": "セフメタゾール", "ファーストシン": "セフォゾプラン", "マキシピーム": "セフェピム", "メロペン": "メロペネム", "チエナム": "イミペネム・シラスタチン", "フィニバックス": "ドリペネム", "オラペネム": "テビペネムピボキシル", "ジスロマック": "アジスロマイシン", "クラリス": "クラリスロマイシン", "クラリシッド": "クラリスロマイシン", "ジェニナック": "ガレノキサシン", "クラビット": "レボフロキサシン", "シプロキサン": "シプロフロキサシン", "アベロックス": "モキシフロキサシン", "ハベカシン": "アルベカシン", "塩酸バンコマイシン": "バンコマイシン", "ザイボックス": "リネゾリド", "キュビシン": "ダプトマイシン", "ビクシリン": "アンピシリン", "ファンガード": "ミカファンギン", "カンサイダス": "カスポファンギン", "ファンギゾン": "アムホテリシンB", "アムビゾーム": "リポソーマルアムホテリシンB", "ジフルカン": "フルコナゾール", "イトリゾール": "イトラコナゾール", "ブイフェンド": "ボリコナゾール", "ノクサフィル": "ポサコナゾール", "クレキサン": "エノキサパリン", "フラグミン": "ダルテパリン", "ヘパリン Na": "ヘパリンナトリウム"}, "reviewTemplate": "あなたは日本内科学会 J-OSLER の【査読委員（二次評価者）】です。\n以下の病歴要約を6視点で**形成的に**査読し、Accept / Revision / Reject を判定してください。\nPII・文字数・略語・薬剤名・用語の機械チェックは別ツールで実施済みです。\nあなたは特に【機械では検査できない\"内容\"】（診断の妥当性・鑑別の十分さ・治療のGL準拠・\n論理構成・引用文献の実在性）を評価してください。\n\n※ プライバシー保護のため、基本情報の個人情報（施設名・患者ID・受持期間・日付・年齢等）は\n　送信前に除外し、確定診断名・転帰のみ残しています。基本情報のPII欠如を指摘しないでください。\n\n# 前提\n- 既定は二次評価（査読委員）レベルの厳しさ。\n- 形成的評価：断罪でなく、必ず具体的な修正案を添える。\n- 指摘は「どこ／なぜ問題か／どう直すか」の3点セットで（抽象的な指摘で終わらせない）。\n\n# 6視点チェックリスト（公式手引きの評価項目に対応）\n- 視点1 基本的記載: 誤字脱字、PII完全削除（氏名・生年月日・住所・本文中の施設名）、薬剤の一般名、\n  句読点統一。分量＝**印刷でA4 2枚以内かつ紙面の80%以上**（手引きの規定。文字数の規定値はなく、\n  目安として概ね1800〜2400字。最終判断はPDFレンダリングで）。\n- 視点2 症例選択: 主病名が提出領域に妥当か。**主病名が症候・副病名で、真の主病名を#1にしていない場合は\n  Reject**（例: 主病名を「うっ血性心不全」とし、真の主病名「拡張型心筋症」を#1にしていない）。\n  外科紹介例で外科治療がない／剖検例で生前担当でない等の症例不適切も Reject。\n- 視点3 診断プロセス【最頻出の指摘】: 鑑別診断 A/B/C と支持・否定根拠、陰性所見、検査選択の根拠。\n- 視点4 治療法: ガイドライン準拠（GL名・文献を明示）、用量・投与経路・期間、効果判定と副作用モニタリング。\n- 視点5 考察の質【3点必須】: EBM比較（教科書知識の羅列でない）／自己省察／患者背景配慮。\n  総合考察が300字未満、または上記項目が欠落していれば Revision 以上。\n- 視点5-文献【最重要・逆引き必須】: 引用文献を1件ずつ実在確認する。\n    ・英文誌は PubMed（著者＋キーワード＋年 → PMID → 書誌照合）。\n    ・**和文誌（日本○○学会誌・診療ガイドライン・厚労省マニュアル等）は PubMed 未収載が多い**。\n      J-STAGE・医中誌・学会/出版社公式でも確認する（PubMedで出ない＝捏造とは限らない）。\n    ・DOIが200でも別論文を指す \"DOIミスマッチ型の捏造\" に注意。\n    ・学習カットオフ後（2024〜2025年）の引用、ガイドラインの版年（「○○年版」）は捏造リスク最大。特に厳格に。\n    ・確認不能／著者-雑誌ミスマッチは**致命級**。`[要出典] <元文>` で明示する。\n    ・★**検索ツールが使えない場合（オフラインのチャット等）は、代替文献を具体的に提示してはならない**。\n      記憶からの書誌（著者名・巻号・頁・版年）は高確率で捏造になる。元文献は `[要出典]` とし、\n      「実在確認は検索可能な環境で要実施」と書くに留める。候補を挙げるときも必ず「未検証・要PubMed確認」と明示。\n    ・捏造URL/DOI/書誌は絶対に付けない。\n- 視点6 倫理的妥当性（全人的視点）: 退院後支援、患者の希望・背景、独居高齢者/認知症への配慮、医師の学びの言語化。\n\n# 致命レベル\n- 患者氏名・イニシャル残存／生年月日記載／本文中の前医・自施設の実名／住所／確定診断名に「疑い」病名\n  ／紙面がA4 2枚を超過 or 80%未満／**総合考察が空・著しく不十分**。\n- ※「基本情報欄」「末尾のシステム出力フッター（専攻医所属施設名・出力日時等）」は症例を判別する\n  **識別用フォーム欄**であり、そこの施設名・患者ID・日付は**評価対象外**（指摘しない）。\n  匿名化が必要なのは病歴・経過・考察など**本文中**の固有名（氏名・生年月日・住所・施設名）。\n\n# 判定の区別（公式手引き）\n- **Reject（要差し替え）**: 別症例での再提出が必要なレベル。主病名が明らかに副病名・症候／症例として不適切。\n- **Revision（要修正）**: 同一症例の手直しで対応できるレベル（鑑別不足・考察不足・PII配慮欠如・分量等）。\n- **Accept（承認）**: 重大な指摘なし。\n- 目安: 🔴1件以上 → Reject/Revision ／ 🟡3件以上 → Revision ／ 🟡0〜2件かつ🔴ゼロ → Accept。\n\n# 出力フォーマット（このまま埋めて出力）\n## 総合判定: 🔴Reject / 🟡Revision / 🟢Accept\n理由（核心を1〜2文）:\n## 文献の実在確認（PubMed逆引き・機械チェック対象外）\n- 確認 N件 / 疑義 N件\n- 疑義があれば: 「<著者 雑誌 年>」→ <PubMed該当なし / 著者-雑誌ミスマッチ> → 置換案 or [要出典] を指示\n## 6視点別評価（各視点を 🟢/🟡/🔴 で、✅良い点・⚠️指摘・❌致命 を列挙）\n### 視点1 基本的記載\n### 視点2 症例選択\n### 視点3 診断プロセス\n### 視点4 治療法\n### 視点5 考察の質\n### 視点6 倫理的妥当性\n## 修正必須項目（Revision/Reject 解消に必要・3点セットで具体的に）\n## 修正推奨項目（Accept でもブラッシュアップ余地）\n## 査読委員の第一印象（率直に1文）\n\n# 注\n- このプロンプトは ChatGPT / Gemini / Claude いずれの生成AIでもそのまま使えます。\n- 引用文献の実在確認（視点5-文献）は **Web検索が使えるモード**（ChatGPTのブラウジング、\n  Gemini、Claude のツール利用等）だとより正確です。検索が使えない場合は、\n  確信が持てない文献を断定せず「要確認」と明示してください。\n- Claude Code でこのツールキット（J-osler-toolkit）を開いている場合は、\n  skill/modes/review.md の Review モードと `python scripts/jcheck.py` を併用するとより厳密です。\n\n────────────── ここから下が病歴要約 本文（対象: {source}）──────────────\n{summary}\n────────────── 病歴要約 本文ここまで ──────────────\n", "revisionTemplate": "あなたは日本内科学会 J-OSLER の【病歴指導医】です。\n以下の病歴要約を自己査読したうえで、**そのまま提出できる「理想的な修正版（100点の提出案）」**を\n作成してください。査読コメントは付いていないので、まず問題点を自分で洗い出してから直します。\nPII・文字数・略語・薬剤名・用語の機械チェックは別ツールで実施済みです。\n\n※ プライバシー保護のため、基本情報の個人情報（施設名・患者ID・受持期間・日付・年齢等）は\n　送信前に除外し、確定診断名・転帰のみ残しています。修正版の基本情報は、施設名・患者ID・日付は\n　空欄/プレースホルダ（例:「入院日: 第1病日」）にし、確定診断名・転帰のみ埋めてください。\n\n# 手順\n1. まず査読委員6視点＋引用文献のPubMed逆引きで問題点を洗い出す（内部作業）。\n2. 良い箇所は保持し、弱い視点を補強した **完全な修正版**を作る（章ごと再構築は弱点部のみ）。\n3. 最後に「何を・なぜ・どう変えたか」の変更サマリーを付ける。\n\n# 修正の原則\n- **最小差分**: 指摘に関係ない箇所を「ついでに」改変しない。1語で済むなら1語置換。\n  ただし鑑別・考察など\"内容が不足している視点\"は理想形まで積極的に補強してよい。\n- **主病名（最重要）**: 主病名が症候・副病名になっていたら、**真の主病名を確定診断名#1に修正**する\n  （例: #1「うっ血性心不全」→ #1「拡張型心筋症」に、うっ血性心不全は副病名へ）。タイトルも端的に付け直す。\n- **PII（識別欄と本文を区別）**:\n    ・本文（病歴・経過・考察）中の前医・施設の固有名 → 「当院」「他院」「近医」等に**匿名化**。\n    ・患者氏名・生年月日・住所・確定診断名の「疑い」病名 → **削除/修正**。\n    ・「基本情報欄」「末尾のシステム出力フッター（専攻医所属施設名・出力日時等）」は識別用フォーム欄\n      なので施設名・患者ID・日付は**そのまま残してよい**（匿名化不要・評価対象外）。\n- **薬剤**: 商品名のみ → 一般名（必要なら商品名®を併記）。\n- **視点3 鑑別**: 「鑑別としてA/B/Cを考慮。Aを支持する所見… Bを否定する所見… 以上から○○と確定診断」の形で補う。\n- **視点4 治療**: ガイドライン名＋出典を1文添える（実在確認した文献のみ）。\n- **視点5 考察**: ①重症度・典型例との異同 ②診断プロセス ③治療の妥当性とEBM ④合併症との関連\n  ⑤全人的視点（社会的・心理的・経済的）⑥自己省察 を各2〜3文で。\n- **視点5-文献【逆引き必須】**: 引用を1件ずつ実在確認。英文誌はPubMed、**和文誌・GL・厚労省\n  マニュアルはJ-STAGE/医中誌/学会公式**でも確認（PubMedで出ない＝捏造とは限らない）。\n    ・★**検索ツールが使える場合のみ**、PMID/DOI等を確認した実在文献へ置換してよい。\n    ・★**検索が使えない場合は、置換文献を具体的に創作してはならない**（記憶からの書誌は捏造になる）。\n      その文献は `[要出典] <元文>` のままにし、変更サマリーに「実在確認は検索可能な環境で要実施」と明記する。\n    ・ガイドラインの版年（例:「2024年版」）も推測で書かない。確認できなければ版年を伏せるか `[要出典]`。\n    ・**捏造URL/DOI/書誌は絶対に付けない**。学習カットオフ後（2024〜2025年）の引用は特に厳格に確認。\n- **分量【厳守】**: 印刷で**A4 2枚以内**に収め、かつ**紙面の80%以上**を埋める（手引きの規定。文字数の\n  規定値はなく目安は概ね1800〜2400字）。**修正版が約2400字を大きく超えないこと**。超えそうなら\n  出力前に検査所見の羅列を圧縮し冗長な経過を削る（A4 2枚以内は提出の絶対条件）。不足時は考察を厚くする。\n- **総合考察は必ず記載**（空欄は Revision 要因）。重症度・典型例との異同／診断・治療の妥当性／全人的視点／自己省察を入れる。\n- **断定形**: 「思われた」「考えられた」の多用を避け、根拠に紐づけて断定する。\n\n# 出力フォーマット（この順で）\n## ① 理想的な修正版（提出用・Markdown）\n（# タイトル から ## 文献 まで、**省略なしの完成形**を1ブロックで。そのままコピーして提出できる体裁で）\n\n## ② 変更サマリー\n- 対応した問題点を表で: | # | 指摘（視点） | 修正内容 |\n- 文献の実在確認: 確認N件 / 置換N件 / [要出典]N件（置換は「元→新」で明記）\n- 分量: 修正前 約N字 → 修正後 約N字（A4 2枚以内・80%以上の目安1800〜2400字に収まるか明示）\n- 残る注意点（あれば）: 提出前に人手で確認すべき事項\n\n# 注\n- このプロンプトは ChatGPT / Gemini / Claude いずれの生成AIでもそのまま使えます。\n- 文献の実在確認は **Web検索が使えるモード**（ChatGPTのブラウジング、Gemini、\n  Claudeのツール利用等）だとより正確です。検索不可なら不確実な文献を断定せず「要確認」と明示。\n- 完成版は提出前に必ず人の目で最終確認してください（特に医学的妥当性と文献）。\n\n────────────── ここから下が病歴要約 本文（対象: {source}）──────────────\n{summary}\n────────────── 病歴要約 本文ここまで ──────────────\n", "bracketToSection": {"主訴": "病歴", "現病歴": "病歴", "病歴": "病歴", "既往歴": "病歴", "社会生活歴": "病歴", "生活歴": "病歴", "家族歴": "病歴", "アレルギー": "病歴", "主な入院時現症": "主な入院時現症", "入院時現症": "主な入院時現症", "現症": "主な入院時現症", "身体所見": "主な入院時現症", "入院時身体所見": "主な入院時現症", "主要な検査所見": "主要な検査所見", "主な検査所見": "主要な検査所見", "検査所見": "主要な検査所見", "入院時検査所見": "主要な検査所見", "プロブレムリスト": "プロブレムリスト", "プロブレム": "プロブレムリスト", "入院後経過と考察": "入院後経過と考察", "経過と考察": "入院後経過と考察", "入院後経過": "入院後経過と考察", "入院後の経過": "入院後経過と考察", "退院時処方": "退院時処方", "処方": "退院時処方", "総合考察": "総合考察", "考察": "総合考察", "文献": "文献", "参考文献": "文献"}, "samples": {"good": "# 発熱と呼吸困難で発症し市中肺炎と診断した一例\n\n<!-- ※ 公開版デモ用の完全な架空サンプル（fictitious）。実患者・実施設・公式手引きとは無関係。\n     ツールの動作を示すための「良い例」（致命なしの体裁）。 -->\n\n## 基本情報\n\n- 入院日: 第1病日\n- 退院日: 第10病日\n- 転帰: 軽快\n- フォローアップ: 外来で\n- 確定診断名 #1: 市中肺炎\n- 確定診断名 #2: 2型糖尿病\n\n## 病歴\n\n主訴: 発熱と呼吸困難。\n\n72歳男性。3日前から発熱と湿性咳嗽が出現し、労作時の呼吸困難が増悪したため近医を受診し、当院に紹介された。\n既往歴: 2型糖尿病（10年）、高血圧症。主病名に関係する手術歴はない。\n社会生活歴: 独居、ADL自立、喫煙20本/日×40年。アレルギー歴なし。家族歴: 特記なし。\n\n## 主な入院時現症\n\n意識清明。体温 38.6 ℃、血圧 132/78 mmHg、脈拍 98 /分 整、呼吸数 24 /分、SpO2 91% (室内気)。\n右下肺野で coarse crackles を聴取する。咽頭発赤や項部硬直は認めない。\n\n## 主要な検査所見\n\n血液: WBC 13,200 /μL、Hb 13.4 g/dL、Plt 22.0 万/μL。\n生化学: AST 26 U/L、ALT 22 U/L、BUN 20 mg/dL、Cre 0.9 mg/dL、Na 136 mEq/L、K 4.1 mEq/L、血糖 168 mg/dL、HbA1c 7.4%。\n炎症: CRP 12.4 mg/dL。\n胸部X線: 右下肺野に浸潤影を認める。胸水は明らかでない。\n尿中肺炎球菌抗原 陽性、喀痰グラム染色でグラム陽性双球菌を多数認める。\n\n## プロブレムリスト\n\n#1 発熱・湿性咳嗽（右下肺の浸潤影）\n#2 低酸素血症（SpO2 91%）\n#3 既往: 2型糖尿病\n#4 社会的: 独居高齢者\n\n## 入院後経過と考察\n\n#1〜#2 市中肺炎\n発熱・咳嗽・右下肺の浸潤影に加え、尿中肺炎球菌抗原陽性・喀痰のグラム陽性双球菌から肺炎球菌性の市中肺炎と診断した。鑑別として、誤嚥性肺炎（明らかな誤嚥のエピソードなし）、結核（慢性経過や空洞影なし）、心不全による肺うっ血（心拡大・両側性陰影なし、BNP正常）を考慮し、いずれも否定的とした。日本呼吸器学会 成人肺炎診療ガイドライン2017に基づき重症度をA-DROPで評価し、中等症と判断してアンピシリン・スルバクタムを静脈内投与した。第3病日に解熱し、酸素需要は第5病日に消失した。\n\n#3 2型糖尿病\n感染に伴う血糖上昇を認めたため、入院中はインスリンで血糖を管理した。\n\n#4 独居高齢者\n退院後の服薬・通院に懸念があり、訪問看護の導入を調整した。\n\n## 退院時処方\n\n- アモキシシリン水和物 250 mg 3錠 1日3回 毎食後\n- メトホルミン塩酸塩 250 mg 2錠 1日2回 朝夕食後\n\n## 総合考察\n\n本症例は、基礎に2型糖尿病を有する高齢者に発症した肺炎球菌性の市中肺炎である。市中肺炎は高齢者の入院・死亡原因として頻度が高く、重症度評価に基づく初期治療と耐性菌への配慮が重要である。本症例は尿中抗原と喀痰所見から起炎菌を早期に推定でき、ガイドラインに沿った狭域抗菌薬で良好に軽快した点が、広域抗菌薬の漫然投与を避ける観点から妥当であったと考える。副病名の糖尿病は感染の重症化・遷延の危険因子であり、入院中の厳格な血糖管理を要した。\n\n全人的側面として、独居高齢者であり退院後の服薬管理・再増悪時の受診行動が課題であった。本人・近隣に住む家族と相談し、訪問看護を導入して服薬と症状観察を支援する体制を整えた。本症例を通じて、高齢者肺炎では重症度評価に基づく適切な抗菌薬選択と、退院後の生活支援を早期から並走させることの重要性を学んだ。\n\n## 文献\n\n1. 日本呼吸器学会. 成人肺炎診療ガイドライン2017. 日本呼吸器学会, 2017.\n", "bad": "# 肺炎の一例\n\n<!-- ※ 公開版デモ用の完全な架空サンプル（fictitious）。実患者・実施設・公式手引きとは無関係。\n     ツールが各種違反を検出する様子を示すための「悪い例」。施設名・薬剤は架空/商品名。 -->\n\n## 基本情報\n\n- 入院日: 2024/03/05\n- 退院日: 2024/03/14\n- 確定診断名 #1: 発熱\n- 確定診断名 #2: DM\n- 確定診断名 #3: 肺炎疑い\n\n## 病歴\n\n72歳男性。3日前から発熱と咳が出現し、近隣のさくら病院を受診後、当院に紹介された。\n2型糖尿病で10年来フォローされている。呼吸苦も訴えていた。\n\n## 主な入院時現症\n\n意識 JCS 1。体温 38.6 ℃、血圧 132/78、脈拍 98 /分、呼吸数 24 /分、SpO2 91%。\n全身倦怠感、食思不振あり。意識は JCS I-1 で経過した。\n\n## 主要な検査所見\n\nWBC 13,200、CRP 12.4、BS 168、HbA1c 7.4。\n胸部CT で右下葉に浸潤影。\n\n## プロブレムリスト\n\n#1 肺炎\n#2 糖尿病\n\n## 入院後経過と考察\n\n2024年3月5日 入院。2024年3月6日 CT 施行。\n細菌性肺炎であった。抗生剤としてクラビットを開始した。\nアムロジンも併用した。経過は良好であった。\n\n## 退院時処方\n\n- クラビット 500 mg\n- アムロジン 5 mg\n- ロキソニン 60 mg 頓用\n\n## 総合考察\n\n\n## 文献\n\n特になし。\n"}};</script>
+<script>/* J-OSLER 病歴要約チェッカー — コアロジック（Python joslerlib の忠実移植）.
+ * ブラウザ(window.JD) / Node(global.JD) 両対応。データは build_web.py が注入。
+ * Severity: 'fatal'(致命) / 'warn'(警告) / 'info'(情報)
+ */
+(function () {
+  "use strict";
+  var JD = (typeof window !== "undefined" && window.JD) ? window.JD
+         : (typeof global !== "undefined" && global.JD) ? global.JD : {};
+
+  var GENERAL = new Set(JD.general || []);
+  var ORDER = JD.canonicalOrder || [];
+  var LABEL = JD.canonicalLabel || {};
+  var ALIASES = JD.sectionAliases || {};
+
+  function iss(checker, severity, message, section, snippet, suggestion) {
+    return { checker: checker, severity: severity, message: message,
+             section: section || null, snippet: snippet || null,
+             suggestion: suggestion || null };
+  }
+  function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  function matchAll(re, s) { re.lastIndex = 0; var out = [], m; while ((m = re.exec(s)) !== null) { out.push(m); if (m.index === re.lastIndex) re.lastIndex++; } return out; }
+
+  // ---------------- parser ----------------
+  var HEAD_RE = /^(#{1,6})\s+(.+?)\s*$/;
+  function normalizeHeading(t) {
+    t = t.trim().replace(/[：:]+$/, "").trim();
+    t = t.replace(/^[0-9０-９]+[.．)）\s]+/, "");
+    t = t.replace(/^[・◆■●]+\s*/, "");
+    if (ALIASES[t] !== undefined) return ALIASES[t];
+    for (var alias in ALIASES) { if (Object.prototype.hasOwnProperty.call(ALIASES, alias) && t.indexOf(alias) >= 0) return ALIASES[alias]; }
+    return null;
+  }
+  function parse(text) {
+    var lines = text.split(/\r?\n/);
+    var sections = {}, title = "", cur = null, buf = [];
+    function flush() {
+      if (cur && buf.length) {
+        var body = buf.join("\n").replace(/^\n+|\n+$/g, "");
+        if (sections[cur] !== undefined) sections[cur] += "\n" + body;
+        else sections[cur] = body;
+      }
+    }
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i], m = line.match(HEAD_RE);
+      if (m) {
+        if (m[1] === "#" && !title) { title = m[2].trim(); continue; }
+        var key = normalizeHeading(m[2]);
+        if (key !== null) { flush(); cur = key; buf = []; continue; }
+      }
+      if (cur !== null) buf.push(line);
+      else if (!title && line.trim()) title = line.trim();
+    }
+    flush();
+    return { title: title, sections: sections, raw: text };
+  }
+  function has(p, key) { return p.sections[key] !== undefined && p.sections[key].trim() !== ""; }
+  function get(p, key) { return p.sections[key] || ""; }
+  function extractDiagnoses(basic) {
+    if (!basic) return [];
+    var out = [], lines = basic.split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/確定診断名\s*#?[0-9０-９]+\s*[:：]\s*(.+)$/);
+      if (m) { var name = m[1].trim().replace(/[。.]+$/, ""); if (name) out.push(name); }
+    }
+    return out;
+  }
+
+  // ---------------- charcount ----------------
+  function countChars(text) { return text.replace(/\s+/g, "").length; }
+  function countBySection(text) {
+    var p = parse(text), out = {};
+    if (p.title) out["title"] = countChars(p.title);
+    for (var i = 0; i < ORDER.length; i++) { var k = ORDER[i]; if (has(p, k)) out[k] = countChars(p.sections[k]); }
+    return out;
+  }
+  var DISC_HEADING_RE = /^#{1,6}\s*(総合考察|考察)\s*$/m;
+  function charcountCheck(text) {
+    var issues = [], by = countBySection(text), total = 0, k;
+    for (k in by) if (Object.prototype.hasOwnProperty.call(by, k)) total += by[k];
+    if (total < 1800) issues.push(iss("charcount", "warn", "全体 " + total + " 字: 推奨 1800 字未満（A4 2枚 80% 未達リスク）", null, null, "総合考察を厚くする／入院後経過のプロブレム別考察を補強"));
+    else if (total > 2400) issues.push(iss("charcount", "warn", "全体 " + total + " 字: 推奨 2400 字超（A4 2枚超リスク）", null, null, "検査所見の羅列を間引き、考察に集約。PDFレンダリングで実寸確認を"));
+    else issues.push(iss("charcount", "info", "全体 " + total + " 字: 推奨レンジ内（1800〜2400）"));
+    var parts = [];
+    for (k in by) if (Object.prototype.hasOwnProperty.call(by, k) && k !== "title") parts.push((LABEL[k] || k) + by[k]);
+    if (parts.length) issues.push(iss("charcount", "info", "セクション別字数", null, parts.join(" / ")));
+    if (by["discussion"] !== undefined && by["discussion"] < 300)
+      issues.push(iss("charcount", "warn", "総合考察が " + by["discussion"] + " 字（300字未満）。査読で最も指摘されるセクション", "総合考察", null, "重症度・典型例との異同・社会的考察・自己省察を最低各2-3文"));
+    if (DISC_HEADING_RE.test(text) && (by["discussion"] || 0) < 30)
+      issues.push(iss("charcount", "warn", "総合考察が未記載（見出しのみ／空欄）。必須セクションで Revision 要因", "総合考察", null, "総合考察は必須。重症度・診断治療の妥当性・副病名・全人的視点・自己省察を記載"));
+    return issues;
+  }
+
+  // ---------------- pii ----------------
+  var WHITELIST_HOSP = new Set(["当院", "近医", "他院", "前院", "前医", "紹介元", "紹介先", "院内"]);
+  var HOSPITAL_RE = /([一-龥々ヶ゠-ヿA-Za-zＡ-Ｚａ-ｚ]{1,15}?)(大学病院|総合病院|医療センター|病院|クリニック|医院|診療所)/g;
+  var DATE_PATTERNS = [
+    /(19|20)\d{2}[/\-．](1[0-2]|0?[1-9])[/\-．](3[01]|[12]\d|0?[1-9])/g,
+    /(19|20)\d{2}年(1[0-2]|0?[1-9])月(3[01]|[12]\d|0?[1-9])日/g
+  ];
+  var BIRTH_MARKER_RE = /(生年月日|生まれ|出生|誕生)/;
+  var PREF_RE = /(北海道|青森県|岩手県|宮城県|秋田県|山形県|福島県|茨城県|栃木県|群馬県|埼玉県|千葉県|東京都|神奈川県|新潟県|富山県|石川県|福井県|山梨県|長野県|岐阜県|静岡県|愛知県|三重県|滋賀県|京都府|大阪府|兵庫県|奈良県|和歌山県|鳥取県|島根県|岡山県|広島県|山口県|徳島県|香川県|愛媛県|高知県|福岡県|佐賀県|長崎県|熊本県|大分県|宮崎県|鹿児島県|沖縄県)([一-龥々ヶ]{1,6}?(市|区|町|村))?/g;
+  var NAME_LABEL_RE = /(氏名|患者氏名|患者名|姓名|Pt名|患者|Name)\s*[:：]\s*([一-龥々ヶ゠-ヿA-Za-z぀-ゟ]{2,12})/g;
+  var INITIAL_RE = /\b([A-Z])\.\s?([A-Z])\.?\b/g;
+  var INITIAL_SKIP = new Set(["A.M.", "P.M.", "A.M", "P.M", "I.M.", "I.V.", "P.O."]);
+  function hospExcluded(prefix, full) { return WHITELIST_HOSP.has(full) || WHITELIST_HOSP.has(prefix.trim()); }
+
+  function piiCheck(text) {
+    var issues = [], parsed = parse(text);
+    var targets = [["title", parsed.title]];
+    for (var i = 0; i < ORDER.length; i++) { var k = ORDER[i]; if (has(parsed, k)) targets.push([LABEL[k], parsed.sections[k]]); }
+    if (Object.keys(parsed.sections).length === 0) targets = [["(全文)", text]];
+    var seen = new Set();
+    for (var t = 0; t < targets.length; t++) {
+      var section = targets[t][0], body = targets[t][1];
+      if (!body) continue;
+      if (section === "基本情報") continue;
+      var ms = matchAll(HOSPITAL_RE, body), j, m;
+      for (j = 0; j < ms.length; j++) {
+        m = ms[j]; var prefix = m[1], kind = m[2], full = prefix + kind;
+        if (hospExcluded(prefix, full)) continue;
+        if (["当", "近", "他", "前", "院"].indexOf(prefix) >= 0) continue;
+        var hkey = "hospital|" + full; if (seen.has(hkey)) continue; seen.add(hkey);
+        issues.push(iss("pii", "fatal", "病院・施設の固有名と思われる記載: 「" + full + "」", section, full, "「当院」「近医」「他院」など匿名表記に置き換えてください"));
+      }
+      for (var p = 0; p < DATE_PATTERNS.length; p++) {
+        ms = matchAll(DATE_PATTERNS[p], body);
+        for (j = 0; j < ms.length; j++) {
+          m = ms[j]; var ds = m[0], dkey = "date|" + ds; if (seen.has(dkey)) continue; seen.add(dkey);
+          var s = Math.max(0, m.index - 10), pre = body.slice(s, m.index), post = body.slice(m.index + ds.length, m.index + ds.length + 2);
+          var isBirth = BIRTH_MARKER_RE.test(pre) || post.indexOf("生") === 0;
+          if (isBirth) issues.push(iss("pii", "fatal", "生年月日の記載: 「" + ds + "」", section, ds, "患者生年月日は記載禁止。削除し、年齢のみを記載してください"));
+          else issues.push(iss("pii", "warn", "暦日付の記載（相対表記推奨）: 「" + ds + "」", section, ds, "経過の日付は「第○病日」「入院○日目」等の相対表記に（生年月日でなければ致命ではない）"));
+        }
+      }
+      ms = matchAll(PREF_RE, body);
+      for (j = 0; j < ms.length; j++) { m = ms[j]; var loc = m[0], lkey = "loc|" + loc; if (seen.has(lkey)) continue; seen.add(lkey); issues.push(iss("pii", "fatal", "居住地と思われる地名: 「" + loc + "」", section, loc, "住所・居住地は記載禁止。社会背景は「独居」「家族同居」等に")); }
+      ms = matchAll(NAME_LABEL_RE, body);
+      for (j = 0; j < ms.length; j++) { m = ms[j]; issues.push(iss("pii", "fatal", "氏名ラベル付き記載: 「" + m[1] + ": " + m[2] + "」", section, m[1] + ": " + m[2], "患者氏名・イニシャルは記載禁止")); }
+      ms = matchAll(INITIAL_RE, body);
+      for (j = 0; j < ms.length; j++) { m = ms[j]; var ini = m[0]; if (INITIAL_SKIP.has(ini)) continue; var ikey = "init|" + ini; if (seen.has(ikey)) continue; seen.add(ikey); issues.push(iss("pii", "warn", "イニシャルと推測される表記: 「" + ini + "」", section, ini, "患者イニシャルなら削除。略語であれば初出定義を")); }
+    }
+    return issues;
+  }
+
+  // ---------------- abbreviations ----------------
+  var ABBR_RE = /(?<![A-Za-z])([A-Z]{2,}[A-Z0-9\-]{0,6})(?![A-Za-z])/g;
+  var DEF_RE = /([一-龥々ヶ゠-ヿ・\sA-Za-z　]+?)\s*[（(]\s*([A-Z][A-Z0-9\-]{1,6})\s*[)）]/g;
+  function abbreviationsCheck(text) {
+    var issues = [], parsed = parse(text);
+    var diagnoses = extractDiagnoses(get(parsed, "basic")), i, m, ms;
+    for (i = 0; i < diagnoses.length; i++) {
+      ms = matchAll(ABBR_RE, diagnoses[i]);
+      for (var d = 0; d < ms.length; d++) {
+        var ab = ms[d][1];
+        if (JD.bannedDx[ab] !== undefined) issues.push(iss("abbreviations", "fatal", "確定診断名に略語: 「" + ab + "」", LABEL["basic"], diagnoses[i], "「" + JD.bannedDx[ab] + "」と日本語完全表記に"));
+        else issues.push(iss("abbreviations", "warn", "確定診断名に略語の可能性: 「" + ab + "」", LABEL["basic"], diagnoses[i], "確定診断名は略語不可。日本語完全表記に"));
+      }
+    }
+    var defined = new Set(matchAll(DEF_RE, parsed.raw).map(function (x) { return x[2]; }));
+    var seenUndef = new Set(), keys = ["history", "exam", "labs", "problems", "course", "discussion"];
+    for (i = 0; i < keys.length; i++) {
+      var key = keys[i], body = parsed.sections[key] || ""; if (!body) continue;
+      ms = matchAll(ABBR_RE, body);
+      for (var a = 0; a < ms.length; a++) {
+        var ab2 = ms[a][1].replace(/-+$/, "");
+        if (GENERAL.has(ab2) || defined.has(ab2) || seenUndef.has(ab2)) continue;
+        seenUndef.add(ab2);
+        if (JD.subspecialty[ab2] !== undefined) issues.push(iss("abbreviations", "warn", "サブスペ略語が初出定義なし: 「" + ab2 + "」（" + JD.subspecialty[ab2] + "）", LABEL[key], ab2, "初出時に「" + JD.subspecialty[ab2] + "（" + ab2 + "）」と定義"));
+        else issues.push(iss("abbreviations", "info", "未登録の略語: 「" + ab2 + "」", LABEL[key], ab2, "初出時に「完全表記（略語）」と定義するか、登録略語一覧に追加検討"));
+      }
+    }
+    return issues;
+  }
+
+  // ---------------- drugs ----------------
+  var TRADEMARK_RE = /([ァ-ヴー一-龥A-Za-z][ァ-ヴーA-Za-z]{2,15})\s*(®|\(R\)|（Ｒ）|登録商標)/g;
+  function genericNear(body, brand, generic, win) {
+    win = win || 60;
+    var cands = [generic]; if (generic.length > 6) cands.push(generic.slice(0, 5));
+    var re = new RegExp(escapeRe(brand), "g"), ms = matchAll(re, body);
+    for (var i = 0; i < ms.length; i++) {
+      var s = Math.max(0, ms[i].index - win), e = Math.min(body.length, ms[i].index + brand.length + win), wt = body.slice(s, e);
+      for (var c = 0; c < cands.length; c++) if (cands[c] !== brand && wt.indexOf(cands[c]) >= 0) return true;
+    }
+    return false;
+  }
+  function drugsCheck(text) {
+    var issues = [], parsed = parse(text), targets = [];
+    if (has(parsed, "rx")) targets.push([LABEL["rx"], parsed.sections["rx"]]);
+    ["history", "course"].forEach(function (k) { if (has(parsed, k)) targets.push([LABEL[k], parsed.sections[k]]); });
+    if (!targets.length) targets = [["(全文)", text]];
+    var reported = new Set();
+    for (var t = 0; t < targets.length; t++) {
+      var section = targets[t][0], body = targets[t][1], brand;
+      for (brand in JD.brandDrugs) {
+        if (!Object.prototype.hasOwnProperty.call(JD.brandDrugs, brand)) continue;
+        if (body.indexOf(brand) < 0) continue;
+        var generic = JD.brandDrugs[brand];
+        if (genericNear(body, brand, generic)) continue;
+        var key = section + "|" + brand; if (reported.has(key)) continue; reported.add(key);
+        issues.push(iss("drugs", "warn", "商品名のみ記載: 「" + brand + "」", section, brand, "「" + generic + "（" + brand + "®）」と一般名で記載（商品名併記は可）"));
+      }
+      var ms = matchAll(TRADEMARK_RE, body);
+      for (var j = 0; j < ms.length; j++) {
+        var name = ms[j][1]; if (reported.has(section + "|" + name)) continue;
+        var g2 = JD.brandDrugs[name]; if (g2 && genericNear(body, name, g2)) continue;
+        reported.add(section + "|" + name);
+        issues.push(iss("drugs", "info", "商標マーク付き商品名: 「" + name + ms[j][2] + "」", section, ms[j][0], "一般名を先に書き、商品名は括弧書きで併記"));
+      }
+    }
+    return issues;
+  }
+
+  // ---------------- terminology ----------------
+  var HEDGE_RE = /(思われ[たる]|考えられ[たる]|と考えら|思わ[れる]+)/g;
+  var JCS_PATTERNS = [/JCS\s*[IVⅠⅡⅢ][\-]?[0-9]/, /JCS\s*[0-9]{1,3}/, /JCS\s*[Ⅰ-Ⅻ]/];
+  var SPO2_RE = /SpO2\s*[=:：]?\s*([0-9]{2,3})\s*%?/g;
+  var SPO2_O2_NEAR_RE = /(室内気|RA|room\s*air|O2\s*[0-9]+\s*L|経鼻|マスク|リザーバ|FiO2)/;
+  var UNIT_TARGETS = { "Hb": "g/dL", "Hct": "%", "Ht": "%", "AST": "U/L", "ALT": "U/L", "LDH": "U/L", "BUN": "mg/dL", "Cre": "mg/dL", "eGFR": "mL/min/1.73m²", "CRP": "mg/dL", "TP": "g/dL", "Alb": "g/dL", "Glu": "mg/dL", "BS": "mg/dL", "T-Bil": "mg/dL", "Na": "mEq/L", "K": "mEq/L", "Cl": "mEq/L", "Ca": "mg/dL", "WBC": "/μL", "RBC": "/μL", "Plt": "/μL", "HbA1c": "%", "PT-INR": "", "APTT": "秒", "D-dimer": "μg/mL" };
+  function unitMissing(body, section) {
+    var issues = [], marker;
+    for (marker in UNIT_TARGETS) {
+      if (!Object.prototype.hasOwnProperty.call(UNIT_TARGETS, marker)) continue;
+      var unit = UNIT_TARGETS[marker]; if (!unit) continue;
+      var re = new RegExp("(?<![A-Za-z])" + escapeRe(marker) + "\\s*[=:：]?\\s*([0-9]+(?:[,　\\s]?[0-9]{3})*(?:\\.[0-9]+)?)(?![.,0-9])(?!\\s*[A-Za-z/μ％%秒万億])", "g");
+      var ms = matchAll(re, body);
+      for (var i = 0; i < ms.length; i++) issues.push(iss("terminology", "info", marker + " の数値に単位なし: 「" + marker + " " + ms[i][1] + "」", section, ms[i][0], "「" + marker + " " + ms[i][1] + " " + unit + "」と単位を併記"));
+    }
+    return issues;
+  }
+  function terminologyCheck(text) {
+    var issues = [], parsed = parse(text), banned = JD.bannedTerms;
+    var keys = ["title", "history", "exam", "labs", "problems", "course", "discussion", "rx"];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i], body = key === "title" ? parsed.title : (parsed.sections[key] || "");
+      var section = key === "title" ? "タイトル" : (LABEL[key] || key);
+      if (!body) continue;
+      for (var term in banned) {
+        if (!Object.prototype.hasOwnProperty.call(banned, term)) continue;
+        if (body.indexOf(term) >= 0) {
+          var meta = banned[term], sev = meta.severity === "warn" ? "warn" : "info";
+          issues.push(iss("terminology", sev, "禁忌語/非推奨表現: 「" + term + "」", section, term, "推奨: 「" + meta.recommended + "」（" + meta.reason + "）"));
+        }
+      }
+    }
+    var hedge = matchAll(HEDGE_RE, parsed.raw).length;
+    if (hedge >= 5) issues.push(iss("terminology", "warn", "「思われた／考えられる」系の表現が " + hedge + " 回出現", null, null, "診断根拠と紐づけて断定形に書き換え"));
+    var found = new Set();
+    for (i = 0; i < JCS_PATTERNS.length; i++) if (JCS_PATTERNS[i].test(parsed.raw)) found.add(i);
+    if (found.size >= 2) issues.push(iss("terminology", "warn", "JCSの表記揺れあり（JCS I-1 / JCS 1 / JCS Ⅰ-1 が混在）", null, null, "施設で統一表記を1つに揃える（例: JCS I-1 形式）"));
+    var exam = parsed.sections["exam"] || "", ms = matchAll(SPO2_RE, exam);
+    for (i = 0; i < ms.length; i++) {
+      var s = Math.max(0, ms[i].index - 40), e = Math.min(exam.length, ms[i].index + ms[i][0].length + 40), win = exam.slice(s, e);
+      if (!SPO2_O2_NEAR_RE.test(win)) issues.push(iss("terminology", "warn", "SpO2 " + ms[i][1] + "% に酸素条件の併記なし", LABEL["exam"], ms[i][0], "「(室内気)」「(O2 2L/min 経鼻)」など酸素条件を必ず併記"));
+    }
+    issues = issues.concat(unitMissing(parsed.sections["exam"] || "", LABEL["exam"]));
+    issues = issues.concat(unitMissing(parsed.sections["labs"] || "", LABEL["labs"]));
+    var diagnoses = extractDiagnoses(get(parsed, "basic"));
+    for (i = 0; i < diagnoses.length; i++) {
+      var dx = diagnoses[i];
+      if (dx.indexOf("疑い") >= 0 || dx.indexOf("疑診") >= 0 || dx.toLowerCase().indexOf("suspected") >= 0)
+        issues.push(iss("terminology", "fatal", "確定診断名に「疑い」病名: 「" + dx + "」", LABEL["basic"], dx, "確定診断名は確定したもののみ。疑い病名は記載不可"));
+    }
+    return issues;
+  }
+
+  // ---------------- run all + summary ----------------
+  function runAll(text) {
+    return [].concat(piiCheck(text), charcountCheck(text), abbreviationsCheck(text), drugsCheck(text), terminologyCheck(text));
+  }
+  function summarize(issues) {
+    var c = { fatal: 0, warn: 0, info: 0 };
+    for (var i = 0; i < issues.length; i++) c[issues[i].severity]++;
+    return c;
+  }
+
+  // ---------------- AI prompt（基本情報PII除去）----------------
+  var H2_RE = /^(#{1,6})\s+(.+?)\s*$/;
+  var BASIC_KEEP_RE = /(確定診断名|主病名|副病名|診断名|転帰|フォローアップ|治癒|軽快|不変|死亡|剖検|転科|転院|他医|外来|帰[：:])/;
+  var FOOTER_MARK_RE = /(システム出力情報|専攻医\s*所属施設名|評価者\s*[：:]|出力者\s*[：:]|出力日時)/;
+  function redactBasicInfo(text) {
+    var out = [], inBasic = false, lines = text.split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i], m = line.match(H2_RE);
+      if (m) {
+        if (m[2].indexOf("基本情報") >= 0) { inBasic = true; out.push(line); out.push("（※施設名・患者ID・受持期間・日付・年齢等の個人情報はプライバシー保護のため送信前に除外。診断名・転帰のみ記載）"); continue; }
+        inBasic = false; out.push(line); continue;
+      }
+      if (inBasic) { if (line.trim() && BASIC_KEEP_RE.test(line)) out.push(line); continue; }
+      if (FOOTER_MARK_RE.test(line)) continue;
+      out.push(line);
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "") + "\n";
+  }
+  function fill(tpl, source, summary) {
+    return tpl.split("{source}").join(source || "病歴要約").split("{summary}").join(summary);
+  }
+  function buildReviewPrompt(text, source) {
+    var raw = (text || "").trim();
+    var summary = raw ? redactBasicInfo(raw) : "（本文が空です。病歴要約を入力してください）";
+    return fill(JD.reviewTemplate, source, summary);
+  }
+  function buildRevisionPrompt(text, source) {
+    var raw = (text || "").trim();
+    var summary = raw ? redactBasicInfo(raw) : "（本文が空です。病歴要約を入力してください）";
+    return fill(JD.revisionTemplate, source, summary);
+  }
+
+  var API = {
+    parse: parse, has: has, get: get, extractDiagnoses: extractDiagnoses,
+    countChars: countChars, countBySection: countBySection,
+    piiCheck: piiCheck, charcountCheck: charcountCheck, abbreviationsCheck: abbreviationsCheck,
+    drugsCheck: drugsCheck, terminologyCheck: terminologyCheck,
+    runAll: runAll, summarize: summarize,
+    redactBasicInfo: redactBasicInfo, buildReviewPrompt: buildReviewPrompt, buildRevisionPrompt: buildRevisionPrompt
+  };
+  if (typeof module !== "undefined" && module.exports) module.exports = API;
+  else window.JoslerCheck = API;
+})();
+</script>
+<script>
+var JC = window.JoslerCheck;
+var ed = document.getElementById('editor');
+var SEV = { fatal:['致命','fatal'], warn:['警告','warn'], info:['情報','info'] };
+var lastPrompt = '';
+
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function updateCount(){
+  var n = JC.countChars(ed.value);
+  var flag = (n>=1800 && n<=2400) ? '✓' : (n<1800 ? '↓' : '↑');
+  document.getElementById('count').textContent = n + ' 字（推奨1800〜2400）' + flag;
+}
+ed.addEventListener('input', updateCount);
+
+function runCheck(){
+  var text = ed.value;
+  if(!text.trim()){ document.getElementById('results').innerHTML = '<span class="muted">病歴要約を入力してください。</span>'; return; }
+  var issues = JC.runAll(text), c = JC.summarize(issues);
+  var html = '';
+  if(!issues.length){ html = '<div class="ok">✓ 指摘なし（致命0 / 警告0 / 情報0）</div>'; }
+  ['fatal','warn','info'].forEach(function(sev){
+    var items = issues.filter(function(i){ return i.severity===sev; });
+    if(!items.length) return;
+    html += '<div class="sev-h '+sev+'">■ '+SEV[sev][0]+'  '+items.length+'件</div>';
+    items.forEach(function(it){
+      html += '<div class="item '+sev+'">● <span class="muted">['+esc(it.checker)+']</span> '+esc(it.message);
+      if(it.section) html += '<span class="meta">＜'+esc(it.section)+'＞</span>';
+      if(it.snippet && it.checker!=='charcount') html += '<span class="meta">該当: '+esc(it.snippet)+'</span>';
+      else if(it.snippet) html += '<span class="meta">'+esc(it.snippet)+'</span>';
+      if(it.suggestion) html += '<span class="meta">→ '+esc(it.suggestion)+'</span>';
+      html += '</div>';
+    });
+  });
+  document.getElementById('results').innerHTML = html;
+  var sum = document.getElementById('summary');
+  sum.textContent = '致命 '+c.fatal+'  ／  警告 '+c.warn+'  ／  情報 '+c.info;
+  sum.className = c.fatal>0 ? 'fatal' : (c.warn>0 ? 'warn' : 'ok');
+}
+
+function loadSample(which){ ed.value = JD.samples[which] || ''; updateCount(); runCheck(); }
+function clearAll(){ ed.value=''; updateCount(); document.getElementById('results').innerHTML=''; document.getElementById('summary').textContent='未チェック'; document.getElementById('summary').className='muted'; }
+
+/* ---- AI request ---- */
+var AI_TIPS =
+"━━━ 運用の推奨（実テストに基づく）━━━\n"+
+"🔒 基本情報の個人情報（施設名・患者ID・日付・年齢等）は送信前に除外済み（確定診断名・転帰のみ）。\n\n"+
+"🔎 本番は『Web検索が使える強いモデル』を推奨:\n"+
+"　・Claude Opus（検索ON） ／ ChatGPT（ブラウジングON）\n"+
+"　・Gemini Flash 等の検索なし軽量モデルは“たたき台”まで。文献も検査値も信用しない（捏造の実例あり）。\n\n"+
+"🧑‍⚕️ 提出前に必ず人の目で最終確認:\n"+
+"　① 引用文献は J-STAGE / PubMed で再照合（AIが捏造することがある）\n"+
+"　② AIが追記した検査値はカルテと突合　③ 字数は PDF 化して A4 2枚以内を確認　④ 医学的妥当性は指導医が判断";
+
+function aiRequest(mode){
+  var text = ed.value;
+  if(!text.trim()){ alert('病歴要約を入力してください。'); return; }
+  // 本文側PIIの警告（基本情報は自動除去済みの本文を検査）
+  var redacted = JC.redactBasicInfo(text);
+  var fatals = JC.piiCheck(redacted).filter(function(i){ return i.severity==='fatal'; });
+  if(fatals.length){
+    var msg = '本文（病歴・経過・考察）に個人情報の可能性がある記載が残っています。\nこのままだと生成AIにも送信されます:\n\n';
+    msg += fatals.slice(0,6).map(function(i){ return '・'+i.message; }).join('\n');
+    if(fatals.length>6) msg += '\n…ほか '+(fatals.length-6)+' 件';
+    msg += '\n\n「当院」「他院」等に匿名化してから送ることを推奨します。\n（基本情報の施設名・患者ID・日付は除外済み）\n\nこのまま送信用プロンプトを作成しますか？';
+    if(!confirm(msg)) return;
+  }
+  var prompt = mode==='revision' ? JC.buildRevisionPrompt(text,'（無題の病歴要約）') : JC.buildReviewPrompt(text,'（無題の病歴要約）');
+  lastPrompt = prompt;
+  document.getElementById('aiTitle').textContent = (mode==='revision'?'✍️ AIに修正版（提出案）の作成を依頼':'🧠 AIに内容レビューを依頼');
+  var head = mode==='revision'
+    ? '✅ 「修正版作成」依頼をコピーしました。①生成AIを開く→②貼り付け→③理想的な修正版＋変更サマリーが返ります。\n\n'
+    : '✅ 「レビュー依頼」をコピーしました。①生成AIを開く→②貼り付け→③6視点評価＋文献の実在確認＋判定が返ります。\n\n';
+  document.getElementById('aiTips').textContent = head + AI_TIPS;
+  document.getElementById('aiPrompt').textContent = prompt;
+  copyPrompt();
+  openModal('aiModal');
+}
+function copyPrompt(){
+  // navigator.clipboard は file:// など非セキュアコンテキストで使えないため execCommand を併用
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(lastPrompt).catch(fallbackCopy);
+  } else { fallbackCopy(); }
+}
+function fallbackCopy(){
+  try{
+    var ta=document.createElement('textarea'); ta.value=lastPrompt;
+    ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+    ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+  }catch(e){ /* 失敗時はプレビューを手動選択コピー */ }
+}
+function downloadPrompt(){
+  var blob = new Blob([lastPrompt], {type:'text/markdown'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ai_request.md'; a.click();
+}
+
+/* ---- registry ---- */
+function showRegistry(){
+  var html = '<p class="note">⚠️ これは公式手引きの確定リストではなく、本ツール独自の編集物（医師国試/専門医試験準拠の標準略語）。確定診断名欄ではどの略語も不可。</p>';
+  html += '<div class="cat">A. 一般略語ホワイトリスト（'+JD.general.length+'語・初出定義不要）</div>';
+  JD.generalByCategory.forEach(function(g){
+    html += '<div style="font-weight:700;margin:8px 0 2px">'+esc(g[0])+'</div><table class="reg"><tr><th>略語</th><th>英語</th><th>日本語</th></tr>';
+    g[1].forEach(function(ab){ var gl=JD.glossary[ab]||['—','—']; html += '<tr><td class="nowrap">'+esc(ab)+'</td><td>'+esc(gl[0])+'</td><td>'+esc(gl[1])+'</td></tr>'; });
+    html += '</table>';
+  });
+  html += '<div class="cat">B. サブスペ略語（'+Object.keys(JD.subspecialty).length+'語・初出定義が必要）</div><table class="reg"><tr><th>略語</th><th>完全表記</th></tr>';
+  Object.keys(JD.subspecialty).sort().forEach(function(k){ html += '<tr><td class="nowrap">'+esc(k)+'</td><td>'+esc(JD.subspecialty[k])+'</td></tr>'; });
+  html += '</table><div class="cat">C. 確定診断名で禁止の略語（'+Object.keys(JD.bannedDx).length+'語）</div><table class="reg"><tr><th>略語</th><th>日本語完全表記</th></tr>';
+  Object.keys(JD.bannedDx).sort().forEach(function(k){ html += '<tr><td class="nowrap">'+esc(k)+'</td><td>'+esc(JD.bannedDx[k])+'</td></tr>'; });
+  html += '</table>';
+  document.getElementById('regBody').innerHTML = html;
+  openModal('regModal');
+}
+
+function openModal(id){ document.getElementById(id).classList.add('show'); }
+function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+Array.prototype.forEach.call(document.querySelectorAll('.modal-bg'), function(bg){ bg.addEventListener('click', function(e){ if(e.target===bg) bg.classList.remove('show'); }); });
+
+/* ---- PDF import (pdf.js, lazy) ---- */
+var PDF_FOOTER_RE = /(専攻医\s*所属施設名|評価者\s*[：:]|出力者\s*[：:]|出力日時)/;
+var PDF_BOILER_RE = /^No\.\s*\d+.*(提出番号|フェーズ|状態)/;
+function pdfLooksMeta(line){
+  if(/[□■☑✓]/.test(line)) return true;
+  var kw = ['提出番号','領域','施設名','患者','受持','入院日','退院日','転　','転帰','フォローアップ','確定診断名','性別','年齢','病歴要約番号','#1','#2','#3','#4','＃'];
+  for(var i=0;i<kw.length;i++) if(line.indexOf(kw[i])>=0) return true;
+  return false;
+}
+function pdfNormalize(text){
+  text = text.normalize('NFKC');
+  var fm = PDF_FOOTER_RE.exec(text); var footer='';
+  if(fm){ var cut=fm.index; var nl=text.lastIndexOf('\n',cut); if(nl>=0) cut=nl+1; footer=text.slice(cut); text=text.slice(0,cut); }
+  var parts = text.split(/【\s*([^】]{1,24}?)\s*】/);
+  var head = parts[0];
+  var out = [];
+  var headLines = head.split(/\r?\n/).map(function(l){return l.replace(/\s+$/,'');})
+                      .filter(function(l){ return l.trim() && !PDF_BOILER_RE.test(l.trim()); });
+  var title='', meta=[];
+  if(headLines.length){ var i0=0; for(var i=0;i<headLines.length;i++){ if(!pdfLooksMeta(headLines[i])){ title=headLines[i].trim(); i0=i; break; } } meta=headLines.slice(0,i0).concat(headLines.slice(i0+1)); }
+  out.push(title? '# '+title : '# （タイトル未取得）'); out.push(''); out.push('## 基本情報');
+  meta.forEach(function(l){ out.push(l); });
+  var footerLines = footer.split(/\r?\n/).map(function(l){return l.trim();}).filter(Boolean);
+  if(footerLines.length){ out.push('（システム出力情報・識別用）'); footerLines.forEach(function(l){ out.push(l); }); }
+  var current=null;
+  for(var j=1;j<parts.length;j+=2){
+    var name=(parts[j]||'').trim(), b=(parts[j+1]||'').trim(), canonical=JD.bracketToSection[name];
+    if(canonical && canonical!==current){ current=canonical; out.push(''); out.push('## '+canonical); if(name!==canonical) out.push(b? name+': '+b : name+':'); else if(b) out.push(b); }
+    else { out.push(b? name+': '+b : name+':'); }
+  }
+  return out.join('\n').replace(/\n{3,}/g,'\n\n').replace(/^\n+|\n+$/g,'')+'\n';
+}
+function loadPdfJs(){
+  return new Promise(function(res,rej){
+    if(window.pdfjsLib){ res(); return; }
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=function(){ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(); };
+    s.onerror=function(){ rej(new Error('pdf.js の読み込みに失敗（オフライン時はPDF取込不可。本文を貼り付けてください）')); };
+    document.head.appendChild(s);
+  });
+}
+function importPDF(file){
+  if(!file) return;
+  loadPdfJs().then(function(){
+    var fr=new FileReader();
+    fr.onload=function(){
+      var data=new Uint8Array(fr.result);
+      window.pdfjsLib.getDocument({data:data}).promise.then(function(pdf){
+        var pages=[]; var seq=Promise.resolve();
+        for(var p=1;p<=pdf.numPages;p++){ (function(p){ seq=seq.then(function(){ return pdf.getPage(p).then(function(page){ return page.getTextContent().then(function(tc){ pages[p-1]=tc.items.map(function(it){return it.str;}).join(' '); }); }); }); })(p); }
+        seq.then(function(){
+          var raw=pages.join('\n').trim();
+          if(raw.replace(/\s+/g,'').length<50){ alert('このPDFからテキストをほとんど抽出できませんでした（スキャン画像の可能性）。本文を貼り付けてください。'); return; }
+          ed.value=pdfNormalize(raw); updateCount(); runCheck();
+          alert('PDFを取り込み、チェックしました。\n\n・基本情報の施設名・患者ID・日付などのPIIは「致命/警告」として表示されます（提出前に消す）。\n・AIに送る際は基本情報の個人情報は自動除外されます。\n・見出しの振り分けがずれたら、行頭に「## 見出し名」を手で補ってください。');
+        });
+      }).catch(function(e){ alert('PDFの読み込みに失敗しました: '+e.message); });
+    };
+    fr.readAsArrayBuffer(file);
+  }).catch(function(e){ alert(e.message); });
+}
+
+updateCount();
+</script>
+</body>
+</html>
