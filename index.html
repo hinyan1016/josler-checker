@@ -3,57 +3,115 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a1a2f">
 <title>J-OSLER 病歴要約チェッカー（Web版）</title>
 <style>
-  :root{ --dark:#1A5276; --primary:#2E86C1; --fatal:#c0392b; --warn:#b9770e; --info:#2471a3; --ok:#1e8449;
-         --bg:#f4f6f8; --card:#fff; --line:#dfe4ea; --muted:#7f8c8d; }
+  :root{
+    --cyan:#22d3ee; --cyan2:#2dd4bf; --blue:#2563eb;
+    --fatal:#ff6b6b; --warn:#ffb020; --info:#38bdf8; --ok:#34d399;
+    --ink:#e7f0fb; --muted:#8fa6c0; --line:rgba(125,200,255,.16);
+    --card:rgba(255,255,255,.045); --panel:#0b1a2e;
+  }
   *{ box-sizing:border-box; }
-  body{ margin:0; font-family:"Meiryo","Yu Gothic UI",system-ui,sans-serif; background:var(--bg); color:#222; }
-  header{ background:var(--dark); color:#fff; padding:10px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  header h1{ font-size:16px; margin:0; font-weight:700; }
-  .privacy{ background:#1e8449; color:#fff; font-size:12px; padding:3px 8px; border-radius:12px; }
-  .wrap{ max-width:1280px; margin:0 auto; padding:12px 16px 80px; }
-  .toolbar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
-  button{ font-family:inherit; font-size:14px; padding:8px 12px; border:1px solid var(--line); background:#fff; border-radius:8px; cursor:pointer; }
-  button:hover{ background:#eef3f7; }
-  button.primary{ background:var(--primary); color:#fff; border-color:var(--primary); font-weight:700; }
-  button.primary:hover{ background:var(--dark); }
-  button.ai{ background:#eef7ff; border-color:#bcdcf5; }
-  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  @media(max-width:860px){ .grid{ grid-template-columns:1fr; } }
-  .pane{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; }
-  .pane h2{ font-size:13px; margin:0 0 6px; color:var(--dark); }
-  #editor{ width:100%; min-height:420px; resize:vertical; font-family:inherit; font-size:14px; line-height:1.6;
-           border:1px solid var(--line); border-radius:8px; padding:10px; }
-  #results{ min-height:420px; max-height:70vh; overflow:auto; font-size:13.5px; line-height:1.55; }
-  .sev-h{ font-weight:700; margin:10px 0 4px; }
-  .fatal{ color:var(--fatal); } .warn{ color:var(--warn); } .info{ color:var(--info); } .ok{ color:var(--ok); font-weight:700; }
-  .item{ margin:2px 0 6px; }
+  html,body{ margin:0; }
+  body{
+    font-family:"Meiryo","Yu Gothic UI",system-ui,sans-serif; color:var(--ink);
+    background:
+      radial-gradient(900px 500px at 12% -8%, rgba(34,211,238,.16), transparent 60%),
+      radial-gradient(800px 500px at 100% 0%, rgba(37,99,235,.20), transparent 55%),
+      linear-gradient(160deg,#08172b 0%, #0a1f3a 45%, #0a1830 100%);
+    background-attachment:fixed; min-height:100vh;
+  }
+  /* faint hex/medical texture */
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; opacity:.06; z-index:0;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='48' viewBox='0 0 56 48'><path d='M14 0l14 8v16l-14 8L0 24V8z M42 0l14 8v16l-14 8-14-8V8z' fill='none' stroke='%2360c8ff' stroke-width='1'/></svg>");
+  }
+  .wrap{ position:relative; z-index:1; max-width:1320px; margin:0 auto; padding:14px 18px 96px; }
+
+  header{ position:relative; z-index:1; padding:18px 22px 6px; }
+  .brand{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .brand h1{
+    margin:0; font-size:30px; font-weight:900; letter-spacing:.5px; line-height:1.15;
+    background:linear-gradient(180deg,#ffffff,#bcd8ef); -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 2px 30px rgba(34,211,238,.25);
+  }
+  .brand h1 .accent{ background:linear-gradient(180deg,#9bedf8,#22d3ee); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .brand .sub{ font-size:13px; color:var(--muted); font-weight:600; }
+  .pills{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .pill{ font-size:12px; font-weight:700; padding:4px 12px; border-radius:999px; border:1px solid var(--line); color:#cfe6fb; background:rgba(255,255,255,.04); }
+  .pill.ok{ color:#062018; background:linear-gradient(135deg,#34d399,#10b981); border:none; }
+  .pill.cyan{ color:#04121f; background:linear-gradient(135deg,#9bedf8,#22d3ee); border:none; }
+  .pill.warn{ color:#ffd9a8; border-color:rgba(255,176,32,.45); background:rgba(255,176,32,.08); }
+  .hr{ height:2px; margin:14px 0 4px; border-radius:2px; background:linear-gradient(90deg,var(--cyan),rgba(34,211,238,0)); }
+
+  .toolbar{ display:flex; gap:9px; flex-wrap:wrap; align-items:center; margin:14px 0 12px; }
+  button{ font-family:inherit; font-size:14px; padding:9px 14px; border-radius:10px; cursor:pointer;
+    color:#dbeafe; background:rgba(255,255,255,.05); border:1px solid var(--line); transition:.15s; }
+  button:hover{ background:rgba(255,255,255,.10); border-color:rgba(125,200,255,.4); transform:translateY(-1px); }
+  button.primary{ color:#04121f; font-weight:800; border:none;
+    background:linear-gradient(135deg,#9bedf8,#22d3ee 55%,#38bdf8); box-shadow:0 0 22px rgba(34,211,238,.45); }
+  button.primary:hover{ box-shadow:0 0 30px rgba(34,211,238,.7); }
+  button.ai{ color:#bff0ff; background:rgba(34,211,238,.10); border-color:rgba(34,211,238,.35); font-weight:700; }
+  button.ai:hover{ background:rgba(34,211,238,.18); }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media(max-width:880px){ .grid{ grid-template-columns:1fr; } }
+  .pane{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:12px;
+    box-shadow:0 10px 40px rgba(0,0,0,.45); backdrop-filter:blur(6px); }
+  .pane h2{ font-size:13px; margin:0 0 8px; color:#9bedf8; letter-spacing:.5px; display:flex; align-items:center; gap:6px; }
+  #editor{ width:100%; min-height:440px; resize:vertical; font-family:inherit; font-size:14px; line-height:1.65;
+    color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  #editor::placeholder{ color:#5e7593; }
+  #editor:focus{ outline:none; border-color:rgba(34,211,238,.55); box-shadow:0 0 0 3px rgba(34,211,238,.15); }
+  #results{ min-height:440px; max-height:72vh; overflow:auto; font-size:13.5px; line-height:1.6;
+    color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .sev-h{ font-weight:800; margin:12px 0 6px; padding-left:10px; border-left:3px solid currentColor; }
+  .fatal{ color:var(--fatal); } .warn{ color:var(--warn); } .info{ color:var(--info); } .ok{ color:var(--ok); font-weight:800; }
+  .item{ margin:3px 0 8px; }
   .muted{ color:var(--muted); }
   .item .meta{ color:var(--muted); font-size:12.5px; display:block; margin-left:18px; }
-  .summary-bar{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line);
-                padding:8px 16px; display:flex; justify-content:space-between; align-items:center; font-weight:700; }
-  .count{ color:var(--muted); font-weight:400; }
-  .modal-bg{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px; z-index:50; }
-  .modal-bg.show{ display:flex; }
-  .modal{ background:#fff; border-radius:12px; max-width:760px; width:100%; max-height:88vh; overflow:auto; padding:16px; }
-  .modal h3{ margin:0 0 8px; color:var(--dark); }
-  .tips{ background:#f1f8ff; border:1px solid #cfe6fb; border-radius:8px; padding:10px; font-size:13px; white-space:pre-wrap; }
-  pre.prompt{ background:#fafafa; border:1px solid var(--line); border-radius:8px; padding:10px; max-height:38vh; overflow:auto;
-              white-space:pre-wrap; word-break:break-word; font-size:12.5px; }
-  table.reg{ border-collapse:collapse; width:100%; font-size:13px; }
-  table.reg th,table.reg td{ border:1px solid var(--line); padding:4px 6px; text-align:left; }
-  table.reg th{ background:#eef3f7; }
-  .cat{ font-weight:700; color:var(--dark); margin:12px 0 4px; }
+
+  .summary-bar{ position:fixed; left:0; right:0; bottom:0; z-index:5;
+    background:rgba(8,20,38,.86); backdrop-filter:blur(10px); border-top:1px solid var(--line);
+    padding:10px 18px; display:flex; justify-content:space-between; align-items:center; font-weight:800; }
+  .count{ color:var(--muted); font-weight:500; }
+
   .note{ font-size:12px; color:var(--muted); }
-  .right{ text-align:right; } .nowrap{ white-space:nowrap; }
+  .disclaimer{ margin-top:16px; padding:14px 16px; background:var(--card); border:1px solid var(--line);
+    border-radius:14px; font-size:12.6px; color:#b9cbe2; line-height:1.75; }
+  .disclaimer b{ color:#cfe6fb; }
+  .disclaimer ul{ margin:6px 0 0; padding-left:20px; }
+
+  .modal-bg{ position:fixed; inset:0; background:rgba(2,8,18,.66); display:none; align-items:center; justify-content:center; padding:16px; z-index:50; backdrop-filter:blur(3px); }
+  .modal-bg.show{ display:flex; }
+  .modal{ background:linear-gradient(160deg,#0c2038,#0a1830); border:1px solid var(--line); border-radius:16px;
+    max-width:780px; width:100%; max-height:88vh; overflow:auto; padding:18px; box-shadow:0 20px 70px rgba(0,0,0,.6); }
+  .modal h3{ margin:0 0 8px; color:#9bedf8; }
+  .tips{ background:rgba(34,211,238,.07); border:1px solid rgba(34,211,238,.25); border-radius:10px; padding:11px; font-size:13px; white-space:pre-wrap; color:#cfe6fb; }
+  pre.prompt{ background:#071426; border:1px solid var(--line); border-radius:10px; padding:11px; max-height:38vh; overflow:auto;
+    white-space:pre-wrap; word-break:break-word; font-size:12.5px; color:#cfe0f2; }
+  table.reg{ border-collapse:collapse; width:100%; font-size:13px; }
+  table.reg th,table.reg td{ border:1px solid var(--line); padding:5px 7px; text-align:left; }
+  table.reg th{ background:rgba(34,211,238,.10); color:#cfe6fb; }
+  .cat{ font-weight:800; color:#9bedf8; margin:12px 0 4px; }
+  .nowrap{ white-space:nowrap; }
   input[type=file]{ display:none; }
+  a{ color:#7dd3fc; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🩺 J-OSLER 病歴要約チェッカー <span style="font-weight:400">Web版</span></h1>
-  <span class="privacy">🔒 すべてブラウザ内で処理・データは外部送信なし</span>
+  <div class="brand">
+    <h1>🩺 <span class="accent">J-OSLER</span> 病歴要約チェッカー <span class="sub">Web版</span></h1>
+    <span class="pill ok">🔒 すべてブラウザ内で処理・外部送信なし</span>
+  </div>
+  <div class="pills">
+    <span class="pill cyan">形式チェック ＋ AIレビュー</span>
+    <span class="pill">PII / 略語 / 薬剤名 / 文字数 / 用語</span>
+    <span class="pill warn">⚠️ 文献の真偽はAIに任せない</span>
+  </div>
+  <div class="hr"></div>
 </header>
 
 <div class="wrap">
@@ -62,7 +120,7 @@
     <button class="ai" onclick="aiRequest('review')">🧠 AIに内容レビュー依頼</button>
     <button class="ai" onclick="aiRequest('revision')">✍️ AIに修正版を依頼</button>
     <span style="flex:1"></span>
-    <label class="nowrap"><button onclick="document.getElementById('pdf').click()">📄 PDF取り込み</button></label>
+    <button onclick="document.getElementById('pdf').click()">📄 PDF取り込み</button>
     <input type="file" id="pdf" accept="application/pdf" onchange="importPDF(this.files[0])">
     <button onclick="loadSample('good')">良い例</button>
     <button onclick="loadSample('bad')">悪い例</button>
@@ -72,24 +130,24 @@
 
   <div class="grid">
     <div class="pane">
-      <h2>病歴要約（Markdown）</h2>
+      <h2>📝 病歴要約（Markdown）</h2>
       <textarea id="editor" placeholder="ここに病歴要約を貼り付け、または「PDF取り込み」「良い例/悪い例」を押してください。&#10;見出しは ## 病歴 / ## 主な入院時現症 … の形式。"></textarea>
     </div>
     <div class="pane">
-      <h2>チェック結果</h2>
+      <h2>✅ チェック結果</h2>
       <div id="results"><span class="muted">「▶ チェック実行」を押すと、致命（赤）／警告（橙）／情報（青）で表示されます。</span></div>
     </div>
   </div>
 
-  <p class="note" style="margin-top:10px">
+  <p class="note" style="margin-top:12px">
     ※ このアプリは機械チェック（形式・PII・文字数・略語・薬剤・用語）専用です。診断の妥当性・鑑別・考察・文献の実在性などの
-    「内容」は <b>🧠/✍️ ボタンで生成AI</b> に委ねる二段構えです（基本情報の個人情報はAI送信前に自動除外）。
+    「内容」は <b style="color:#9bedf8">🧠/✍️ ボタンで生成AI</b> に委ねる二段構えです（基本情報の個人情報はAI送信前に自動除外）。
     最終判断は PDF レンダリングで A4 2枚以内を確認してください。
   </p>
 
-  <div style="margin-top:14px; padding:12px; background:#fff; border:1px solid var(--line); border-radius:10px; font-size:12.5px; color:#444; line-height:1.7">
+  <div class="disclaimer">
     <b>⚠️ 利用上の注意（必ずお読みください）</b>
-    <ul style="margin:6px 0 0; padding-left:20px">
+    <ul>
       <li><b>医療従事者向けの教育・自己点検支援ツール</b>です。診断・治療・患者管理に用いるものではありません。</li>
       <li><b>結果は機械的な目安</b>であり、提出可否・医学的妥当性の<b>最終判断は指導医など人が行ってください</b>。検出漏れ・誤検出があり得ます。</li>
       <li><b>個人情報の取扱い</b>: 入力した病歴要約は<b>このブラウザ内だけで処理され、サーバには送信されません</b>。ただし
@@ -98,7 +156,7 @@
       <li>登録略語一覧は公式手引きの確定リストではなく、本ツール独自の編集物です。</li>
       <li>本ツールの利用により生じたいかなる結果についても、作者は責任を負いません。</li>
     </ul>
-    <div class="note" style="margin-top:6px">J-OSLER 病歴要約チェッカー（Web版・オフライン動作）。日本内科学会・J-OSLER とは無関係の非公式ツールです。</div>
+    <div class="note" style="margin-top:6px">💡 医知創造ラボ ／ J-OSLER 病歴要約チェッカー（Web版・オフライン動作）。日本内科学会・J-OSLER とは無関係の非公式ツールです。</div>
   </div>
 </div>
 
@@ -126,7 +184,7 @@
 <!-- registry modal -->
 <div class="modal-bg" id="regModal">
   <div class="modal">
-    <h3>登録略語一覧</h3>
+    <h3>📖 登録略語一覧</h3>
     <div id="regBody"></div>
     <div style="margin-top:10px"><button onclick="closeModal('regModal')">閉じる</button></div>
   </div>
@@ -510,7 +568,6 @@ var AI_TIPS =
 function aiRequest(mode){
   var text = ed.value;
   if(!text.trim()){ alert('病歴要約を入力してください。'); return; }
-  // 本文側PIIの警告（基本情報は自動除去済みの本文を検査）
   var redacted = JC.redactBasicInfo(text);
   var fatals = JC.piiCheck(redacted).filter(function(i){ return i.severity==='fatal'; });
   if(fatals.length){
@@ -532,17 +589,12 @@ function aiRequest(mode){
   openModal('aiModal');
 }
 function copyPrompt(){
-  // navigator.clipboard は file:// など非セキュアコンテキストで使えないため execCommand を併用
-  if(navigator.clipboard && window.isSecureContext){
-    navigator.clipboard.writeText(lastPrompt).catch(fallbackCopy);
-  } else { fallbackCopy(); }
+  if(navigator.clipboard && window.isSecureContext){ navigator.clipboard.writeText(lastPrompt).catch(fallbackCopy); }
+  else { fallbackCopy(); }
 }
 function fallbackCopy(){
-  try{
-    var ta=document.createElement('textarea'); ta.value=lastPrompt;
-    ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
-    ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-  }catch(e){ /* 失敗時はプレビューを手動選択コピー */ }
+  try{ var ta=document.createElement('textarea'); ta.value=lastPrompt; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }catch(e){}
 }
 function downloadPrompt(){
   var blob = new Blob([lastPrompt], {type:'text/markdown'});
@@ -554,7 +606,7 @@ function showRegistry(){
   var html = '<p class="note">⚠️ これは公式手引きの確定リストではなく、本ツール独自の編集物（医師国試/専門医試験準拠の標準略語）。確定診断名欄ではどの略語も不可。</p>';
   html += '<div class="cat">A. 一般略語ホワイトリスト（'+JD.general.length+'語・初出定義不要）</div>';
   JD.generalByCategory.forEach(function(g){
-    html += '<div style="font-weight:700;margin:8px 0 2px">'+esc(g[0])+'</div><table class="reg"><tr><th>略語</th><th>英語</th><th>日本語</th></tr>';
+    html += '<div style="font-weight:700;margin:8px 0 2px;color:#cfe6fb">'+esc(g[0])+'</div><table class="reg"><tr><th>略語</th><th>英語</th><th>日本語</th></tr>';
     g[1].forEach(function(ab){ var gl=JD.glossary[ab]||['—','—']; html += '<tr><td class="nowrap">'+esc(ab)+'</td><td>'+esc(gl[0])+'</td><td>'+esc(gl[1])+'</td></tr>'; });
     html += '</table>';
   });
