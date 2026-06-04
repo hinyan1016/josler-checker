@@ -482,7 +482,7 @@
 
   // ---------------- AI prompt（基本情報PII除去）----------------
   var H2_RE = /^(#{1,6})\s+(.+?)\s*$/;
-  var BASIC_KEEP_RE = /(確定診断名|主病名|副病名|診断名|転帰|フォローアップ|治癒|軽快|不変|死亡|剖検|転科|転院|他医|外来|帰[：:])/;
+  var BASIC_KEEP_RE = /(確定診断名|主病名|副病名|診断名|転帰|フォローアップ|治癒|軽快|不変|死亡|剖検|転科|転院|他医|外来|帰[：:]|#\s*[0-9０-９])/;
   var FOOTER_MARK_RE = /(システム出力情報|専攻医\s*所属施設名|評価者\s*[：:]|出力者\s*[：:]|出力日時)/;
   function redactBasicInfo(text) {
     var out = [], inBasic = false, lines = text.split(/\r?\n/);
@@ -645,6 +645,18 @@ function pdfLooksMeta(line){
   for(var i=0;i<kw.length;i++) if(line.indexOf(kw[i])>=0) return true;
   return false;
 }
+function itemsToLines(items){
+  // pdf.js のテキスト断片を Y座標で行にまとめ直す（改行構造を復元）。
+  var lines = {};
+  items.forEach(function(it){
+    if(!it.str) return;
+    var y = Math.round(it.transform[5]);
+    (lines[y] = lines[y] || []).push([it.transform[4], it.str]);
+  });
+  return Object.keys(lines).map(Number).sort(function(a,b){ return b-a; })  // 上→下
+    .map(function(y){ return lines[y].sort(function(a,b){ return a[0]-b[0]; }).map(function(p){ return p[1]; }).join(' ').replace(/\s+/g,' ').trim(); })
+    .filter(function(l){ return l; }).join('\n');
+}
 function pdfNormalize(text){
   text = text.normalize('NFKC');
   var fm = PDF_FOOTER_RE.exec(text); var footer='';
@@ -655,7 +667,7 @@ function pdfNormalize(text){
   var headLines = head.split(/\r?\n/).map(function(l){return l.replace(/\s+$/,'');})
                       .filter(function(l){ return l.trim() && !PDF_BOILER_RE.test(l.trim()); });
   var title='', meta=[];
-  if(headLines.length){ var i0=0; for(var i=0;i<headLines.length;i++){ if(!pdfLooksMeta(headLines[i])){ title=headLines[i].trim(); i0=i; break; } } meta=headLines.slice(0,i0).concat(headLines.slice(i0+1)); }
+  if(headLines.length){ var ti=-1; for(var i=0;i<headLines.length;i++){ if(!pdfLooksMeta(headLines[i])){ title=headLines[i].trim(); ti=i; break; } } meta = (ti<0) ? headLines.slice() : headLines.slice(0,ti).concat(headLines.slice(ti+1)); }
   out.push(title? '# '+title : '# （タイトル未取得）'); out.push(''); out.push('## 基本情報');
   meta.forEach(function(l){ out.push(l); });
   var footerLines = footer.split(/\r?\n/).map(function(l){return l.trim();}).filter(Boolean);
@@ -686,7 +698,7 @@ function importPDF(file){
       var data=new Uint8Array(fr.result);
       window.pdfjsLib.getDocument({data:data}).promise.then(function(pdf){
         var pages=[]; var seq=Promise.resolve();
-        for(var p=1;p<=pdf.numPages;p++){ (function(p){ seq=seq.then(function(){ return pdf.getPage(p).then(function(page){ return page.getTextContent().then(function(tc){ pages[p-1]=tc.items.map(function(it){return it.str;}).join(' '); }); }); }); })(p); }
+        for(var p=1;p<=pdf.numPages;p++){ (function(p){ seq=seq.then(function(){ return pdf.getPage(p).then(function(page){ return page.getTextContent().then(function(tc){ pages[p-1]=itemsToLines(tc.items); }); }); }); })(p); }
         seq.then(function(){
           var raw=pages.join('\n').trim();
           if(raw.replace(/\s+/g,'').length<50){ alert('このPDFからテキストをほとんど抽出できませんでした（スキャン画像の可能性）。本文を貼り付けてください。'); return; }
